@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<title>BLIND SPOT</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+    background: #0b0d12; touch-action: none; overscroll-behavior: none;
+    font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+  #game-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #ui-root { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  #ui-root * { pointer-events: auto; }
+</style>
+</head>
+<body>
+<canvas id="game-canvas"></canvas>
+<div id="ui-root"></div>
+<script src="vendor/three.min.js"></script>
+<script>
+'use strict';
+/* BLIND SPOT — a camera-network tower defense prototype.
+   BUILD @BUILDSTAMP */
+/* @INJECT_GAME_CODE */
+</script>
+</body>
+</html>

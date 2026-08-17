@@ -1,0 +1,7 @@
+node_modules/
+*.log
+dist/
+staging/
+__Competition_Overview_Rules_Guidance/
+*.zip
+.playwright/
