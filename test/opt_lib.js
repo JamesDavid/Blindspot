@@ -71,14 +71,21 @@ function bestLongSite(sb, state) {
   return best;
 }
 
-function makeTrialPlayer(sb, genome) {
+function makeTrialPlayer(sb, genome, opts) {
+  opts = opts || {};
   const g = Object.assign({}, DEFAULT_GENOME, genome || {});
   const mem = { lastThink: -Infinity, lastReloc: -Infinity, thresholdMoves: 0, placed: 0, relocations: 0 };
+  const think = opts.think || 1.5;
+  // single-action mode models the interactive layer's tempo (§0.10): one
+  // staged action per think, like the demo driving real menus
+  let budget = Infinity;
+  const spend = () => { if (budget <= 0) return false; budget--; return true; };
 
   const controller = (state) => {
     const { Actions, State, CaseSystem, CameraSystem } = sb;
-    if (state.time - mem.lastThink < 1.5) return;   // human-ish cadence
+    if (state.time - mem.lastThink < think) return;
     mem.lastThink = state.time;
+    budget = opts.single ? 1 : Infinity;
 
     // ---- the dial (the strategic verb) ----
     const raining = state.shift.rainUntil > state.time;
@@ -92,7 +99,7 @@ function makeTrialPlayer(sb, genome) {
       if (expiring) break;
     }
     const target = Math.round(g.thrBase - (raining ? g.thrRainDrop : 0) - (expiring ? g.thrExpiryDrop : 0));
-    if (Math.abs(target - state.threshold) >= 2) {
+    if (Math.abs(target - state.threshold) >= 2 && spend()) {
       const r = Actions.setThreshold(state, target);
       if (r.ok && !r.unchanged) mem.thresholdMoves++;
     }
@@ -104,6 +111,7 @@ function makeTrialPlayer(sb, genome) {
       const avg = ev.length ? ev.reduce((s, r) => s + r.conf, 0) / ev.length : 0;
       const gr = CaseSystem.grade(state, ev);
       const chargeScore = avg / 100 + 0.15 * Math.min(ev.length, 4) - (gr.contradiction ? 0.35 : 0);
+      if (!spend()) break;
       Actions.adjudicate(state, kase.id, chargeScore > g.adjBias ? 'CHARGE' : 'RELEASE');
     }
 
@@ -113,7 +121,7 @@ function makeTrialPlayer(sb, genome) {
 
     // clean fouled lenses first — cheap if noticed
     for (const cam of state.cameras) {
-      if (cam.tags > 0 && state.budget > sb.CONFIG.Upgrades.CLEAN + 20) {
+      if (cam.tags > 0 && state.budget > sb.CONFIG.Upgrades.CLEAN + 20 && spend()) {
         Actions.upgrade(state, cam.id, 'CLEAN');
       }
     }
@@ -125,7 +133,7 @@ function makeTrialPlayer(sb, genome) {
         if (cam.type === 'RELAY') continue;
         if (cam.drive.length > most) { most = cam.drive.length; target = cam; }
       }
-      if (target && state.budget >= sb.CONFIG.Cameras.RELAY.COST) {
+      if (target && state.budget >= sb.CONFIG.Cameras.RELAY.COST && spend()) {
         for (const e of state.map.adj[target.node]) {
           if (Actions.place(state, e.node, 'RELAY').ok) break;
         }
@@ -134,10 +142,10 @@ function makeTrialPlayer(sb, genome) {
       if (state.budget >= sb.CONFIG.Cameras.LONG.COST + 40 && state.shift.num >= 3 &&
           !state.cameras.some(c => c.type === 'LONG')) {
         const spot = bestLongSite(sb, state);
-        if (spot) Actions.place(state, spot.node, 'LONG', spot.dir);
+        if (spot && spend()) Actions.place(state, spot.node, 'LONG', spot.dir);
       } else if (state.budget >= sb.CONFIG.Cameras.POST.COST) {
         const n = bestSite(sb, state, g);
-        if (n >= 0) { if (Actions.place(state, n, 'POST').ok) mem.placed++; }
+        if (n >= 0 && spend()) { if (Actions.place(state, n, 'POST').ok) mem.placed++; }
       }
     }
 
@@ -146,7 +154,7 @@ function makeTrialPlayer(sb, genome) {
     if (state.cameras.length >= 3 && storageCams < g.storagePerCam * state.cameras.length &&
         state.budget > sb.CONFIG.Upgrades.STORAGE + 60) {
       const cam = state.cameras.find(c => !c.storageUp && c.type !== 'RELAY');
-      if (cam) Actions.upgrade(state, cam.id, 'STORAGE');
+      if (cam && spend()) Actions.upgrade(state, cam.id, 'STORAGE');
     }
 
     // harden the most isolated pole when rich
@@ -157,7 +165,7 @@ function makeTrialPlayer(sb, genome) {
         const w = sb.Sightlines.camerasWatchingNode(state, cam.node, cam.id).length;
         if (w < fewest) { fewest = w; iso = cam; }
       }
-      if (iso) Actions.upgrade(state, iso.id, 'HARDEN');
+      if (iso && spend()) Actions.upgrade(state, iso.id, 'HARDEN');
     }
 
     // ---- relocation (the §13 counterplay) ----
@@ -168,7 +176,7 @@ function makeTrialPlayer(sb, genome) {
         const recent = state.reads.some(r => r.camId === cam.id && r.t > cutoff);
         if (recent) continue;
         const n = bestSite(sb, state, g);
-        if (n >= 0 && Actions.relocate(state, cam.id, n).ok) {
+        if (n >= 0 && spend() && Actions.relocate(state, cam.id, n).ok) {
           mem.relocations++;
           mem.lastReloc = state.time;
         }

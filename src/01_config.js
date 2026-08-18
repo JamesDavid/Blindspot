@@ -146,10 +146,10 @@ var CONFIG = Object.freeze({
 
   Ladder: {                         // §13.4 — four tiers; overrides graded by evolution (test/evolve_opposition.js)
     TIERS: [
-      { name: 'QUIET',    crimeMult: 0.7, vandalMult: 0.6, learnMult: 0.6, contestedMult: 0.8 }, // hand-authored; evolution grading planned
-      { name: 'RESTLESS', crimeMult: 1.0, vandalMult: 1.0, learnMult: 1.0, contestedMult: 1.0 }, // the authored baseline
-      { name: 'BRAZEN',   crimeMult: 1.25, vandalMult: 1.4, learnMult: 1.5, contestedMult: 1.2 }, // hand-authored; evolution grading planned
-      { name: 'LAWLESS',  crimeMult: 1.5, vandalMult: 1.8, learnMult: 2.2, contestedMult: 1.4 }  // hand-authored; evolution grading planned
+      { name: 'QUIET',    crimeMult: 0.7, vandalMult: 0.6, learnMult: 0.6, contestedMult: 0.8 }, // hand-authored soft: the tier protects struggling players; evolution never explores this corner
+      { name: 'RESTLESS', crimeMult: 1.0, vandalMult: 1.0, learnMult: 1.0, contestedMult: 1.0 }, // the authored baseline every sweep runs at
+      { name: 'BRAZEN',   crimeMult: 1.2, vandalMult: 1.5, learnMult: 1.1, contestedMult: 1.1 }, // interpolated RESTLESS→LAWLESS to keep the ladder monotone (raw grade had vandal<1, illegible for a harder mood)
+      { name: 'LAWLESS',  crimeMult: 1.43, vandalMult: 2.07, learnMult: 1.23, contestedMult: 1.21 } // evolution-graded (test/evolve_opposition.js): holds the champion to fit 98 vs ~150 at baseline
     ],
     START_TIER: 1,                  // spec-authored: open at RESTLESS
     DDA_FROM_SHIFT: 2,              // spec-authored
@@ -184,7 +184,16 @@ var CONFIG = Object.freeze({
   Demo: {                            // §17.3 — staged one-action-at-a-time tempo, validated at THIS rate
     HIGHLIGHT_S: 0.45, PRESS_S: 0.35, CONFIRM_S: 0.35, // spec-authored
     PLAN_INTERVAL: 1.2,             // judgment-tuned: seconds between planning passes
-    BLACKLIST_S: 30                 // spec-authored: any action that changes nothing is benched
+    BLACKLIST_S: 30,                // spec-authored: any action that changes nothing is benched
+    // The demo's strategy is the evolved champion (test/evolve.js: holdout
+    // 4/5 warrant wins vs 2/5 hand-authored), re-validated at ONE action
+    // per ~3s (test/opt_demo_tempo.js: 4/5 wins at demo tempo) — §0.10.
+    STRATEGY: {
+      THR_CALM: 44, THR_RAIN: 32,   // evolved: the champion plays a lax bar and outruns the trust cost
+      W_SPAWN: 1.80, W_COVERAGE: 0.32, W_QUALITY: 0.76, // evolved site-scoring weights
+      ADJ_BIAS: 0.5,                // evolved: charge-leaning adjudication
+      BUILD_PACE: 2.24              // evolved: cameras wanted per shift
+    }
   },
 
   Review: {},                       // reserved: Review knobs live under Shifts

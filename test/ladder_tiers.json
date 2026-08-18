@@ -1,0 +1,38 @@
+[
+  {
+    "name": "QUIET",
+    "crimeMult": 1.219,
+    "vandalMult": 1.805,
+    "learnMult": 0.519,
+    "contestedMult": 0.774,
+    "championFit": 174.8,
+    "championWins": 3
+  },
+  {
+    "name": "RESTLESS",
+    "crimeMult": 1.281,
+    "vandalMult": 2.03,
+    "learnMult": 1.324,
+    "contestedMult": 1.209,
+    "championFit": 150.1,
+    "championWins": 3
+  },
+  {
+    "name": "BRAZEN",
+    "crimeMult": 1.701,
+    "vandalMult": 0.78,
+    "learnMult": 1.226,
+    "contestedMult": 0.774,
+    "championFit": 124.5,
+    "championWins": 3
+  },
+  {
+    "name": "LAWLESS",
+    "crimeMult": 1.433,
+    "vandalMult": 2.075,
+    "learnMult": 1.226,
+    "contestedMult": 1.209,
+    "championFit": 98,
+    "championWins": 3
+  }
+]

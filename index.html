@@ -22,7 +22,7 @@
 <script>
 'use strict';
 /* BLIND SPOT — a camera-network tower defense prototype. */
-window.BUILDSTAMP = 'BUILD 2026-08-18 00:33 UTC';
+window.BUILDSTAMP = 'BUILD 2026-08-18 01:00 UTC';
 
 // ============================================================
 // CONFIG
@@ -176,10 +176,10 @@ var CONFIG = Object.freeze({
 
   Ladder: {                         // §13.4 — four tiers; overrides graded by evolution (test/evolve_opposition.js)
     TIERS: [
-      { name: 'QUIET',    crimeMult: 0.7, vandalMult: 0.6, learnMult: 0.6, contestedMult: 0.8 }, // hand-authored; evolution grading planned
-      { name: 'RESTLESS', crimeMult: 1.0, vandalMult: 1.0, learnMult: 1.0, contestedMult: 1.0 }, // the authored baseline
-      { name: 'BRAZEN',   crimeMult: 1.25, vandalMult: 1.4, learnMult: 1.5, contestedMult: 1.2 }, // hand-authored; evolution grading planned
-      { name: 'LAWLESS',  crimeMult: 1.5, vandalMult: 1.8, learnMult: 2.2, contestedMult: 1.4 }  // hand-authored; evolution grading planned
+      { name: 'QUIET',    crimeMult: 0.7, vandalMult: 0.6, learnMult: 0.6, contestedMult: 0.8 }, // hand-authored soft: the tier protects struggling players; evolution never explores this corner
+      { name: 'RESTLESS', crimeMult: 1.0, vandalMult: 1.0, learnMult: 1.0, contestedMult: 1.0 }, // the authored baseline every sweep runs at
+      { name: 'BRAZEN',   crimeMult: 1.2, vandalMult: 1.5, learnMult: 1.1, contestedMult: 1.1 }, // interpolated RESTLESS→LAWLESS to keep the ladder monotone (raw grade had vandal<1, illegible for a harder mood)
+      { name: 'LAWLESS',  crimeMult: 1.43, vandalMult: 2.07, learnMult: 1.23, contestedMult: 1.21 } // evolution-graded (test/evolve_opposition.js): holds the champion to fit 98 vs ~150 at baseline
     ],
     START_TIER: 1,                  // spec-authored: open at RESTLESS
     DDA_FROM_SHIFT: 2,              // spec-authored
@@ -214,7 +214,16 @@ var CONFIG = Object.freeze({
   Demo: {                            // §17.3 — staged one-action-at-a-time tempo, validated at THIS rate
     HIGHLIGHT_S: 0.45, PRESS_S: 0.35, CONFIRM_S: 0.35, // spec-authored
     PLAN_INTERVAL: 1.2,             // judgment-tuned: seconds between planning passes
-    BLACKLIST_S: 30                 // spec-authored: any action that changes nothing is benched
+    BLACKLIST_S: 30,                // spec-authored: any action that changes nothing is benched
+    // The demo's strategy is the evolved champion (test/evolve.js: holdout
+    // 4/5 warrant wins vs 2/5 hand-authored), re-validated at ONE action
+    // per ~3s (test/opt_demo_tempo.js: 4/5 wins at demo tempo) — §0.10.
+    STRATEGY: {
+      THR_CALM: 44, THR_RAIN: 32,   // evolved: the champion plays a lax bar and outruns the trust cost
+      W_SPAWN: 1.80, W_COVERAGE: 0.32, W_QUALITY: 0.76, // evolved site-scoring weights
+      ADJ_BIAS: 0.5,                // evolved: charge-leaning adjudication
+      BUILD_PACE: 2.24              // evolved: cameras wanted per shift
+    }
   },
 
   Review: {},                       // reserved: Review knobs live under Shifts
@@ -1556,7 +1565,9 @@ var CaseSystem = (() => {
           close(state, kase, g.best, 'auto');
           continue;
         }
-        const nearBar = g.best && g.bestSum >= S - CONFIG.Cases.CONTESTED_BAND && g.bestSum < S;
+        const tier = CONFIG.Ladder.TIERS[state.ladder.tier] || CONFIG.Ladder.TIERS[1];
+        const band = CONFIG.Cases.CONTESTED_BAND * (tier.contestedMult || 1);
+        const nearBar = g.best && g.bestSum >= S - band && g.bestSum < S;
         const contested = (g.contradiction && ev.length >= 2) || nearBar;
         if (contested && state.contestedThisShift < CONFIG.Cases.CONTESTED_PER_SHIFT_MAX) {
           kase.status = 'CONTESTED';
@@ -4372,13 +4383,15 @@ var Demo = (() => {
     const D = CONFIG.Demo;
     const ok = (key) => !blacklist.has(key) || blacklist.get(key) < wall;
 
+    const STRAT = D.STRATEGY;
+
     // 1. adjudicate a contested card (visibly weighing, then pressing)
     const contested = state.cases.find(c => c.status === 'CONTESTED');
     if (contested && ok('adjudicate')) {
       const ev = CaseSystem.usableEvidence(state, contested);
       const avg = ev.length ? ev.reduce((s, r) => s + r.conf, 0) / ev.length : 0;
       const gr = CaseSystem.grade(state, ev);
-      const charge = (avg / 100 + 0.15 * Math.min(ev.length, 4) - (gr.contradiction ? 0.35 : 0)) > 0.72;
+      const charge = (avg / 100 + 0.15 * Math.min(ev.length, 4) - (gr.contradiction ? 0.35 : 0)) > STRAT.ADJ_BIAS;
       const btnKey = (charge ? 'charge-' : 'release-') + contested.id;
       stage('adjudicate', [
         { delay: 0.3, fn: () => { const el = UI.getEl(btnKey); if (el) el.scrollIntoView({ inline: 'center' }); lit(UI.getEl(btnKey)); } },
@@ -4389,7 +4402,7 @@ var Demo = (() => {
 
     // 2. rain: move the dial down, visibly
     const raining = state.shift.rainUntil > state.time;
-    const wantThr = raining ? 48 : 58;
+    const wantThr = raining ? STRAT.THR_RAIN : STRAT.THR_CALM;
     if (Math.abs(state.threshold - wantThr) >= 6 && ok('dial')) {
       stage('dial', [
         { delay: 0.2, fn: () => lit(UI.getEl('bandpill')) },
@@ -4410,7 +4423,7 @@ var Demo = (() => {
     }
 
     // 3. build the network through the real menus
-    const wanted = Math.min(9, Math.max(2, state.shift.num + 2));
+    const wanted = Math.min(9, Math.max(2, Math.ceil(state.shift.num * STRAT.BUILD_PACE) + 1));
     if (state.cameras.length < wanted && state.budget >= CONFIG.Cameras.POST.COST && ok('place')) {
       const site = pickSite();
       if (site !== null) {
@@ -4466,7 +4479,8 @@ var Demo = (() => {
       for (const z of state.map.spawnZones) minSpawn = Math.min(minSpawn, CaseSystem.nodeDist(state, n.id, z));
       const q = Sightlines.quoteQuality(state, n.id, 'POST', 0);
       if (!q) continue;
-      const score = q.count / 8 + q.best / 100 + 1 / (1 + minSpawn);
+      const S = CONFIG.Demo.STRATEGY;
+      const score = S.W_COVERAGE * q.count / 8 + S.W_QUALITY * q.best / 100 + S.W_SPAWN / (1 + minSpawn);
       if (score > bestScore) { bestScore = score; best = n.id; }
     }
     return best;

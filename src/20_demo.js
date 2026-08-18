@@ -60,13 +60,15 @@ var Demo = (() => {
     const D = CONFIG.Demo;
     const ok = (key) => !blacklist.has(key) || blacklist.get(key) < wall;
 
+    const STRAT = D.STRATEGY;
+
     // 1. adjudicate a contested card (visibly weighing, then pressing)
     const contested = state.cases.find(c => c.status === 'CONTESTED');
     if (contested && ok('adjudicate')) {
       const ev = CaseSystem.usableEvidence(state, contested);
       const avg = ev.length ? ev.reduce((s, r) => s + r.conf, 0) / ev.length : 0;
       const gr = CaseSystem.grade(state, ev);
-      const charge = (avg / 100 + 0.15 * Math.min(ev.length, 4) - (gr.contradiction ? 0.35 : 0)) > 0.72;
+      const charge = (avg / 100 + 0.15 * Math.min(ev.length, 4) - (gr.contradiction ? 0.35 : 0)) > STRAT.ADJ_BIAS;
       const btnKey = (charge ? 'charge-' : 'release-') + contested.id;
       stage('adjudicate', [
         { delay: 0.3, fn: () => { const el = UI.getEl(btnKey); if (el) el.scrollIntoView({ inline: 'center' }); lit(UI.getEl(btnKey)); } },
@@ -77,7 +79,7 @@ var Demo = (() => {
 
     // 2. rain: move the dial down, visibly
     const raining = state.shift.rainUntil > state.time;
-    const wantThr = raining ? 48 : 58;
+    const wantThr = raining ? STRAT.THR_RAIN : STRAT.THR_CALM;
     if (Math.abs(state.threshold - wantThr) >= 6 && ok('dial')) {
       stage('dial', [
         { delay: 0.2, fn: () => lit(UI.getEl('bandpill')) },
@@ -98,7 +100,7 @@ var Demo = (() => {
     }
 
     // 3. build the network through the real menus
-    const wanted = Math.min(9, Math.max(2, state.shift.num + 2));
+    const wanted = Math.min(9, Math.max(2, Math.ceil(state.shift.num * STRAT.BUILD_PACE) + 1));
     if (state.cameras.length < wanted && state.budget >= CONFIG.Cameras.POST.COST && ok('place')) {
       const site = pickSite();
       if (site !== null) {
@@ -154,7 +156,8 @@ var Demo = (() => {
       for (const z of state.map.spawnZones) minSpawn = Math.min(minSpawn, CaseSystem.nodeDist(state, n.id, z));
       const q = Sightlines.quoteQuality(state, n.id, 'POST', 0);
       if (!q) continue;
-      const score = q.count / 8 + q.best / 100 + 1 / (1 + minSpawn);
+      const S = CONFIG.Demo.STRATEGY;
+      const score = S.W_COVERAGE * q.count / 8 + S.W_QUALITY * q.best / 100 + S.W_SPAWN / (1 + minSpawn);
       if (score > bestScore) { bestScore = score; best = n.id; }
     }
     return best;

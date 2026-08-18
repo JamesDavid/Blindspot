@@ -300,7 +300,9 @@ var CaseSystem = (() => {
           close(state, kase, g.best, 'auto');
           continue;
         }
-        const nearBar = g.best && g.bestSum >= S - CONFIG.Cases.CONTESTED_BAND && g.bestSum < S;
+        const tier = CONFIG.Ladder.TIERS[state.ladder.tier] || CONFIG.Ladder.TIERS[1];
+        const band = CONFIG.Cases.CONTESTED_BAND * (tier.contestedMult || 1);
+        const nearBar = g.best && g.bestSum >= S - band && g.bestSum < S;
         const contested = (g.contradiction && ev.length >= 2) || nearBar;
         if (contested && state.contestedThisShift < CONFIG.Cases.CONTESTED_PER_SHIFT_MAX) {
           kase.status = 'CONTESTED';
