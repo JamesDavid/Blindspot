@@ -22,7 +22,7 @@
 <script>
 'use strict';
 /* BLIND SPOT — a camera-network tower defense prototype. */
-window.BUILDSTAMP = 'BUILD 2026-08-18 03:11 UTC';
+window.BUILDSTAMP = 'BUILD 2026-08-18 03:24 UTC';
 
 // ============================================================
 // CONFIG
@@ -233,14 +233,17 @@ var CONFIG = Object.freeze({
     HIGHLIGHT_S: 0.45, PRESS_S: 0.35, CONFIRM_S: 0.35, // spec-authored
     PLAN_INTERVAL: 1.2,             // judgment-tuned: seconds between planning passes
     BLACKLIST_S: 30,                // spec-authored: any action that changes nothing is benched
-    // The demo's strategy is the evolved champion (test/evolve.js: holdout
-    // 4/5 warrant wins vs 2/5 hand-authored), re-validated at ONE action
-    // per ~3s (test/opt_demo_tempo.js: 4/5 wins at demo tempo) — §0.10.
+    // The demo's strategy is the tracking-era champion (test/evolve.js:
+    // holdout 4/5 wins vs 2/5 for the pre-tracking champion re-scored and
+    // 1/5 hand-authored), re-validated at demo tempo (opt_demo_tempo.js).
+    // Evolution's own verdict on the tracking rules: wPair pinned at its
+    // cap — CHAINS of cameras are the skill now — and the lax-bar blitz
+    // died (bar back up to 55).
     STRATEGY: {
-      THR_CALM: 44, THR_RAIN: 32,   // evolved: the champion plays a lax bar and outruns the trust cost
-      W_SPAWN: 1.80, W_COVERAGE: 0.32, W_QUALITY: 0.76, // evolved site-scoring weights
+      THR_CALM: 55, THR_RAIN: 55,   // evolved: hold the bar; drop it only for expiring evidence
+      W_SPAWN: 1.37, W_COVERAGE: 0.19, W_QUALITY: 0.60, W_PAIR: 2.5, // evolved site weights: chain-building dominates
       ADJ_BIAS: 0.5,                // evolved: charge-leaning adjudication
-      BUILD_PACE: 2.24              // evolved: cameras wanted per shift
+      BUILD_PACE: 3.0               // evolved: maximum eyes
     }
   },
 
@@ -1723,7 +1726,12 @@ var CaseSystem = (() => {
   // the city is bigger than the network, and that is not the analyst's
   // failure. Losing a lead you HAD still costs.
   function goCold(state, kase, reason) {
-    const engaged = (kase._leads || 0) >= CONFIG.Cases.ENGAGED_AT || kase.status === 'CONTESTED';
+    // the "city is bigger than the network" mercy requires HAVING a
+    // network: with no working cameras, every cold crime is on you —
+    // which is also what lets a refused Review still end (§16.1)
+    const hasNetwork = state.cameras.some(c => c.type !== 'RELAY');
+    const engaged = !hasNetwork ||
+      (kase._leads || 0) >= CONFIG.Cases.ENGAGED_AT || kase.status === 'CONTESTED';
     if (!engaged) {
       kase.status = 'LAPSED';
       state.stats.lapsed = (state.stats.lapsed || 0) + 1;
@@ -5207,10 +5215,18 @@ var Demo = (() => {
       return;
     }
 
-    // 3. build the network through the real menus
-    const wanted = Math.min(9, Math.max(2, Math.ceil(state.shift.num * STRAT.BUILD_PACE) + 1));
+    // 3. build the network through the real menus. The warrant is the win
+    // condition and it weighs x3 in the Review, so the syndicate block
+    // gets a staked-out CHAIN before anything else expands.
+    const wanted = Math.min(12, Math.max(2, Math.ceil(state.shift.num * STRAT.BUILD_PACE) + 1));
     if (state.cameras.length < wanted && state.budget >= CONFIG.Cameras.POST.COST && ok('place')) {
-      const site = pickSite();
+      let site = null;
+      if (state.cameras.length >= 3) {
+        const near = state.cameras.filter(c => c.type !== 'RELAY' &&
+          CaseSystem.nodeDist(state, c.node, state.map.syndicate) <= CONFIG.Cases.ANCHOR_DIST).length;
+        if (near < 2) site = pickSiteNear(state.map.syndicate, 3);
+      }
+      if (!site) site = pickSite();
       if (site !== null) {
         const relayTurn = state.cameras.length >= 4 &&
           !state.cameras.some(c => c.type === 'RELAY') && state.budget >= CONFIG.Cameras.RELAY.COST;
@@ -5262,6 +5278,23 @@ var Demo = (() => {
     }
   }
 
+  // best aimed pole within `hops` of an anchor node (the stakeout move)
+  function pickSiteNear(anchor, hops) {
+    let best = null, bestScore = -Infinity;
+    for (const n of state.map.nodes) {
+      if (n.exit || !state.map.adj[n.id].length) continue;
+      if (CameraSystem.camAt(state, n.id)) continue;
+      if (CaseSystem.nodeDist(state, n.id, anchor) > hops) continue;
+      for (let dir = 0; dir < 4; dir++) {
+        const q = Sightlines.quoteQuality(state, n.id, 'POST', dir);
+        if (!q) continue;
+        const score = q.count / 8 + q.best / 100;
+        if (score > bestScore) { bestScore = score; best = { node: n.id, dir }; }
+      }
+    }
+    return best;
+  }
+
   function pickSite() {
     let best = null, bestScore = -Infinity;
     for (const n of state.map.nodes) {
@@ -5273,11 +5306,18 @@ var Demo = (() => {
         [state.map.syndicate]);
       let minSpawn = Infinity;
       for (const z of sources) minSpawn = Math.min(minSpawn, CaseSystem.nodeDist(state, n.id, z));
+      let nearCam = Infinity;
+      for (const cam of state.cameras) {
+        if (cam.type === 'RELAY') continue;
+        nearCam = Math.min(nearCam, CaseSystem.nodeDist(state, n.id, cam.node));
+      }
+      const pair = nearCam === Infinity ? 0 : 1 / (1 + Math.abs(nearCam - 2));
       for (let dir = 0; dir < 4; dir++) {
         const q = Sightlines.quoteQuality(state, n.id, 'POST', dir);
         if (!q) continue;
         const S = CONFIG.Demo.STRATEGY;
-        const score = S.W_COVERAGE * q.count / 8 + S.W_QUALITY * q.best / 100 + S.W_SPAWN / (1 + minSpawn);
+        const score = S.W_COVERAGE * q.count / 8 + S.W_QUALITY * q.best / 100 +
+          S.W_SPAWN / (1 + minSpawn) + S.W_PAIR * pair;
         if (score > bestScore) { bestScore = score; best = { node: n.id, dir }; }
       }
     }

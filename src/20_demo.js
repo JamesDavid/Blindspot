@@ -105,10 +105,18 @@ var Demo = (() => {
       return;
     }
 
-    // 3. build the network through the real menus
-    const wanted = Math.min(9, Math.max(2, Math.ceil(state.shift.num * STRAT.BUILD_PACE) + 1));
+    // 3. build the network through the real menus. The warrant is the win
+    // condition and it weighs x3 in the Review, so the syndicate block
+    // gets a staked-out CHAIN before anything else expands.
+    const wanted = Math.min(12, Math.max(2, Math.ceil(state.shift.num * STRAT.BUILD_PACE) + 1));
     if (state.cameras.length < wanted && state.budget >= CONFIG.Cameras.POST.COST && ok('place')) {
-      const site = pickSite();
+      let site = null;
+      if (state.cameras.length >= 3) {
+        const near = state.cameras.filter(c => c.type !== 'RELAY' &&
+          CaseSystem.nodeDist(state, c.node, state.map.syndicate) <= CONFIG.Cases.ANCHOR_DIST).length;
+        if (near < 2) site = pickSiteNear(state.map.syndicate, 3);
+      }
+      if (!site) site = pickSite();
       if (site !== null) {
         const relayTurn = state.cameras.length >= 4 &&
           !state.cameras.some(c => c.type === 'RELAY') && state.budget >= CONFIG.Cameras.RELAY.COST;
@@ -160,6 +168,23 @@ var Demo = (() => {
     }
   }
 
+  // best aimed pole within `hops` of an anchor node (the stakeout move)
+  function pickSiteNear(anchor, hops) {
+    let best = null, bestScore = -Infinity;
+    for (const n of state.map.nodes) {
+      if (n.exit || !state.map.adj[n.id].length) continue;
+      if (CameraSystem.camAt(state, n.id)) continue;
+      if (CaseSystem.nodeDist(state, n.id, anchor) > hops) continue;
+      for (let dir = 0; dir < 4; dir++) {
+        const q = Sightlines.quoteQuality(state, n.id, 'POST', dir);
+        if (!q) continue;
+        const score = q.count / 8 + q.best / 100;
+        if (score > bestScore) { bestScore = score; best = { node: n.id, dir }; }
+      }
+    }
+    return best;
+  }
+
   function pickSite() {
     let best = null, bestScore = -Infinity;
     for (const n of state.map.nodes) {
@@ -171,11 +196,18 @@ var Demo = (() => {
         [state.map.syndicate]);
       let minSpawn = Infinity;
       for (const z of sources) minSpawn = Math.min(minSpawn, CaseSystem.nodeDist(state, n.id, z));
+      let nearCam = Infinity;
+      for (const cam of state.cameras) {
+        if (cam.type === 'RELAY') continue;
+        nearCam = Math.min(nearCam, CaseSystem.nodeDist(state, n.id, cam.node));
+      }
+      const pair = nearCam === Infinity ? 0 : 1 / (1 + Math.abs(nearCam - 2));
       for (let dir = 0; dir < 4; dir++) {
         const q = Sightlines.quoteQuality(state, n.id, 'POST', dir);
         if (!q) continue;
         const S = CONFIG.Demo.STRATEGY;
-        const score = S.W_COVERAGE * q.count / 8 + S.W_QUALITY * q.best / 100 + S.W_SPAWN / (1 + minSpawn);
+        const score = S.W_COVERAGE * q.count / 8 + S.W_QUALITY * q.best / 100 +
+          S.W_SPAWN / (1 + minSpawn) + S.W_PAIR * pair;
         if (score > bestScore) { bestScore = score; best = { node: n.id, dir }; }
       }
     }

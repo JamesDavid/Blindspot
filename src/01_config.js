@@ -203,14 +203,17 @@ var CONFIG = Object.freeze({
     HIGHLIGHT_S: 0.45, PRESS_S: 0.35, CONFIRM_S: 0.35, // spec-authored
     PLAN_INTERVAL: 1.2,             // judgment-tuned: seconds between planning passes
     BLACKLIST_S: 30,                // spec-authored: any action that changes nothing is benched
-    // The demo's strategy is the evolved champion (test/evolve.js: holdout
-    // 4/5 warrant wins vs 2/5 hand-authored), re-validated at ONE action
-    // per ~3s (test/opt_demo_tempo.js: 4/5 wins at demo tempo) — §0.10.
+    // The demo's strategy is the tracking-era champion (test/evolve.js:
+    // holdout 4/5 wins vs 2/5 for the pre-tracking champion re-scored and
+    // 1/5 hand-authored), re-validated at demo tempo (opt_demo_tempo.js).
+    // Evolution's own verdict on the tracking rules: wPair pinned at its
+    // cap — CHAINS of cameras are the skill now — and the lax-bar blitz
+    // died (bar back up to 55).
     STRATEGY: {
-      THR_CALM: 44, THR_RAIN: 32,   // evolved: the champion plays a lax bar and outruns the trust cost
-      W_SPAWN: 1.80, W_COVERAGE: 0.32, W_QUALITY: 0.76, // evolved site-scoring weights
+      THR_CALM: 55, THR_RAIN: 55,   // evolved: hold the bar; drop it only for expiring evidence
+      W_SPAWN: 1.37, W_COVERAGE: 0.19, W_QUALITY: 0.60, W_PAIR: 2.5, // evolved site weights: chain-building dominates
       ADJ_BIAS: 0.5,                // evolved: charge-leaning adjudication
-      BUILD_PACE: 2.24              // evolved: cameras wanted per shift
+      BUILD_PACE: 3.0               // evolved: maximum eyes
     }
   },
 

@@ -1,24 +1,24 @@
 {
-  "training": 0,
-  "generations": 16,
-  "pop": 24,
   "genome": {
-    "wSpawnDist": 1.7951847966704857,
-    "wExitDist": 1.1615630869109586,
-    "wCoverage": 0.3218808072979479,
-    "wQuality": 0.7613908767527515,
-    "wWatch": 0.6598846715132253,
-    "thrBase": 44.23592061871537,
-    "thrRainDrop": 11.95615029178088,
-    "thrExpiryDrop": 4.637397017928479,
+    "wSpawnDist": 1.3664329142557237,
+    "wExitDist": 0.5914792152764516,
+    "wCoverage": 0.18504212031009676,
+    "wQuality": 0.6023508431092043,
+    "wWatch": 1.8125025783205064,
+    "wPair": 2.5,
+    "thrBase": 55.391311223262576,
+    "thrRainDrop": 0,
+    "thrExpiryDrop": 20,
     "adjBias": 0.5,
-    "storagePerCam": 0.3383081571950145,
-    "relocIdle": 54.85111043544335,
-    "buildPace": 2.2386073408651788,
-    "relayAt": 7,
-    "hardenAt": 159.18831698197852
+    "storagePerCam": 0.21276006092803734,
+    "relocIdle": 29.416891747783623,
+    "buildPace": 3,
+    "relayAt": 6,
+    "hardenAt": 317.0848238881099
   },
-  "holdout": 86.28562933367571,
-  "holdoutWins": 3,
-  "note": "pre-quadrant champion, re-validated"
+  "training": 98.54787539729568,
+  "holdout": 77.86253086811715,
+  "holdoutWins": 4,
+  "generations": 16,
+  "pop": 24
 }
