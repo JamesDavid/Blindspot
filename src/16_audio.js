@@ -146,5 +146,17 @@ var GameAudio = (() => {
   }
 
   function setMuted(m) { muted = m; if (ambientMute) ambientMute.gain.value = m ? 0 : 1; }
+
+  // Backgrounding a mobile tab suspends WebAudio, and iOS can park the
+  // context 'interrupted' with no self-recovery. Returning to the tab
+  // retries a resume, and the first touch after returning always works
+  // (a user gesture may resume contexts that a visibility event cannot).
+  if (typeof document !== 'undefined') {
+    const revive = () => { if (ctx && ctx.state !== 'running') { try { ctx.resume(); } catch (e) {} } };
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) revive(); });
+    window.addEventListener('pageshow', revive);
+    window.addEventListener('focus', revive);
+    document.addEventListener('pointerdown', revive, { passive: true });
+  }
   return { unlock, onEvents, sounds: S, setMuted };
 })();
