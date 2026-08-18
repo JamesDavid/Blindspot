@@ -148,15 +148,41 @@ var GameAudio = (() => {
   function setMuted(m) { muted = m; if (ambientMute) ambientMute.gain.value = m ? 0 : 1; }
 
   // Backgrounding a mobile tab suspends WebAudio, and iOS can park the
-  // context 'interrupted' with no self-recovery. Returning to the tab
-  // retries a resume, and the first touch after returning always works
-  // (a user gesture may resume contexts that a visibility event cannot).
+  // context in a state where resume() is accepted yet nothing ever plays
+  // again. Recovery is resume-then-verify: retry a resume on return to the
+  // tab and on the first touch; if the context still is not running shortly
+  // after, tear it down and rebuild from scratch — a context created fresh
+  // inside a user gesture always runs.
+  let reviveTimer = null;
+  function hardRestart() {
+    try { if (ctx) ctx.close(); } catch (e) {}
+    ctx = null; master = null; ambientSrc = null; ambientMute = null;
+    if (ensure()) {
+      if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) {} }
+      startAmbient();
+    }
+  }
+  function revive() {
+    if (!ctx) return;
+    if (ctx.state !== 'running') { try { ctx.resume(); } catch (e) {} }
+    if (reviveTimer) clearTimeout(reviveTimer);
+    reviveTimer = setTimeout(() => { if (ctx && ctx.state !== 'running') hardRestart(); }, 400);
+  }
+  // iOS can also report 'running' while the audio session is dead — that
+  // state is undetectable from JS, so after ANY backgrounding the next
+  // touch rebuilds the context unconditionally, inside the gesture.
+  let wasBackgrounded = false;
   if (typeof document !== 'undefined') {
-    const revive = () => { if (ctx && ctx.state !== 'running') { try { ctx.resume(); } catch (e) {} } };
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) revive(); });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) wasBackgrounded = true;
+      else revive();
+    });
     window.addEventListener('pageshow', revive);
     window.addEventListener('focus', revive);
-    document.addEventListener('pointerdown', revive, { passive: true });
+    document.addEventListener('pointerdown', () => {
+      if (wasBackgrounded && ctx) { wasBackgrounded = false; hardRestart(); }
+      else revive();
+    }, { passive: true });
   }
   return { unlock, onEvents, sounds: S, setMuted };
 })();
