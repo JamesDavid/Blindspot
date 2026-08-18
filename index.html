@@ -22,7 +22,7 @@
 <script>
 'use strict';
 /* BLIND SPOT — a camera-network tower defense prototype. */
-window.BUILDSTAMP = 'BUILD 2026-08-18 01:07 UTC';
+window.BUILDSTAMP = 'BUILD 2026-08-18 01:16 UTC';
 
 // ============================================================
 // CONFIG
@@ -3332,6 +3332,7 @@ var Renderer = (() => {
   }
 
   function notifyUserMotion() { lastUserMotion = clockMs / 1000; }
+  function userIdleSeconds() { return clockMs / 1000 - lastUserMotion; }
 
   // ---------- per-frame ----------
 
@@ -3411,7 +3412,7 @@ var Renderer = (() => {
 
   return {
     init, setMatch, update, resize,
-    pan, zoomBy, centerOn, notifyUserMotion,
+    pan, zoomBy, centerOn, notifyUserMotion, userIdleSeconds,
     pickNode: (px, py) => curState ? pickNode(curState, px, py) : null,
     pickObject: (px, py) => curState ? pickObject(curState, px, py) : null,
     worldToScreen, screenToGround, nodeScreen: (nodeIdx) => {
@@ -4079,6 +4080,13 @@ var UI = (() => {
       rb.onclick = () => { hideOverlay(); opts.onResume(); };
       o.appendChild(rb);
     }
+    if (opts.resumeDemo) {
+      const rd = h('button', 'bigbtn', `RESUME WATCHING — SHIFT ${opts.resumeDemo.shift}`);
+      rd.setAttribute('data-key', 'resumedemo');
+      rd.style.fontSize = '12px';
+      rd.onclick = () => { hideOverlay(); opts.onResumeDemo(); };
+      o.appendChild(rd);
+    }
     const sb2 = h('button', 'bigbtn primary', 'START SHIFT');
     sb2.setAttribute('data-key', 'start');
     sb2.onclick = () => { hideOverlay(); opts.onStart(seedInput.value.trim() || null); };
@@ -4090,8 +4098,9 @@ var UI = (() => {
     const seedrow = h('div', 'seedrow');
     const seedInput = h('input');
     seedInput.setAttribute('data-key', 'seedinput');
-    seedInput.placeholder = 'seed (blank = random)';
+    seedInput.placeholder = 'seed';
     seedInput.maxLength = 12;
+    seedInput.value = randomSeedString();   // never blank (player-directed)
     const rndb = h('button', null, 'RANDOM');
     rndb.setAttribute('data-key', 'randomseed');
     rndb.onclick = () => { seedInput.value = randomSeedString(); };
@@ -4175,7 +4184,12 @@ var UI = (() => {
 
   function onTap(x, y) {
     if (!state || state.verdict) return;
-    if (hooks.onTapWhileDemo && hooks.onTapWhileDemo()) return;
+    // demo mode is a guided tour, not a locked door (player-directed):
+    // pan, zoom and tap-to-name all work; only the chip hands the desk back
+    if (hooks.isDemoMode && hooks.isDemoMode()) {
+      describeTap(Renderer.pickObject(x, y));
+      return;
+    }
     if (els.menu) { closeMenu(); return; }
 
     if (relocPick !== null) {
@@ -4511,7 +4525,7 @@ var Demo = (() => {
           !state.cameras.some(c => c.type === 'RELAY') && state.budget >= CONFIG.Cameras.RELAY.COST;
         const buyKey = relayTurn ? 'buy-relay' : 'buy-post';
         stage('place', [
-          { delay: 0.2, fn: () => { Renderer.centerOn(site); } },
+          { delay: 0.2, fn: () => { if (Renderer.userIdleSeconds() > 6) Renderer.centerOn(site); } },
           { delay: 0.5, fn: () => {
             const s = Renderer.nodeScreen(site);
             UI.openMenu(site, s.x, s.y);
@@ -4537,7 +4551,7 @@ var Demo = (() => {
     const dirty = state.cameras.find(c => c.tags > 0);
     if (dirty && state.budget > CONFIG.Upgrades.CLEAN + 10 && ok('clean')) {
       stage('clean', [
-        { delay: 0.2, fn: () => Renderer.centerOn(dirty.node) },
+        { delay: 0.2, fn: () => { if (Renderer.userIdleSeconds() > 6) Renderer.centerOn(dirty.node); } },
         { delay: 0.5, fn: () => { const s = Renderer.nodeScreen(dirty.node); UI.openMenu(dirty.node, s.x, s.y); } },
         { delay: D.HIGHLIGHT_S, fn: () => lit(UI.getEl('clean')) },
         { delay: D.PRESS_S + 0.3, fn: () => {
@@ -4606,6 +4620,7 @@ var Demo = (() => {
 
   let state = null, mode = 'title';   // 'title' | 'play' | 'demo'
   let lastFrame = 0, mainSeq = 0;
+  let pausedDemo = null, demoChip = null;
   window.__warp = 1;                  // rAF-warp for film capture (§21.1)
 
   // ---------- persistence helpers (UI layer owns localStorage) ----------
@@ -4652,18 +4667,51 @@ var Demo = (() => {
     }
   }
 
+  function showDemoChip() {
+    hideDemoChip();
+    demoChip = document.createElement('button');
+    demoChip.textContent = 'TAKE THE DESK BACK ✕';
+    demoChip.setAttribute('data-key', 'exitdemo');
+    demoChip.style.cssText = 'position:absolute;left:50%;transform:translateX(-50%);' +
+      'bottom:calc(14px + env(safe-area-inset-bottom));z-index:45;background:#161922ee;' +
+      'border:1px solid #3a4152;color:#d8dde8;border-radius:10px;padding:9px 16px;' +
+      'font-size:11px;font-weight:700;letter-spacing:0.06em;';
+    demoChip.onclick = () => backToTitle();
+    document.getElementById('ui-root').appendChild(demoChip);
+  }
+  function hideDemoChip() {
+    if (demoChip) { demoChip.remove(); demoChip = null; }
+  }
+
   function startDemo() {
+    Demo.stop();
+    pausedDemo = null;
+    UI.hideOverlay();
     state = newMatch('demo-' + randomSeedString(), { demo: true });
     mode = 'demo';
     mainSeq = state.eventSeq;
     Renderer.setMatch(state);
     UI.setMatch(state);
-    UI.identity('WATCH A SHIFT — tap anywhere to take the desk back.');
+    UI.identity('WATCH A SHIFT — pan and tap around freely; the chip below hands the desk back.');
     Demo.start(state);
+    showDemoChip();
+  }
+
+  function resumeDemo() {
+    state = pausedDemo;
+    pausedDemo = null;
+    mode = 'demo';
+    mainSeq = state.eventSeq;
+    Renderer.setMatch(state);
+    UI.setMatch(state);
+    showDemoChip();
   }
 
   function backToTitle() {
-    if (Demo.isRunning()) Demo.stop();
+    // leaving the demo pauses it — the title offers RESUME WATCHING
+    if (mode === 'demo' && state && !state.verdict) pausedDemo = state;
+    else if (Demo.isRunning()) Demo.stop();
+    hideDemoChip();
     Tutorial.finish();
     mode = 'title';
     showTitle();
@@ -4685,6 +4733,8 @@ var Demo = (() => {
     const saved = loadJson(CONFIG.Save.KEY);
     UI.showTitle({
       resume: saved ? { shift: saved.shift.num, seed: saved.seed } : null,
+      resumeDemo: pausedDemo ? { shift: pausedDemo.shift.num } : null,
+      onResumeDemo: () => resumeDemo(),
       onResume: () => {
         try {
           state = SaveSystem.restore(saved);
@@ -4741,6 +4791,7 @@ var Demo = (() => {
       if (!hadVerdict && state.verdict) {
         if (mode === 'demo') {
           // the demo resets itself and keeps teaching
+          hideDemoChip();
           setTimeout(() => { if (mode === 'demo') startDemo(); }, 5200);
         } else {
           onMatchEnd();
@@ -4759,10 +4810,7 @@ var Demo = (() => {
       onAgain: () => startPlay(null),
       onBackToMenu: () => backToTitle(),
       onDialTouched: () => Tutorial.noteDialTouched(),
-      onTapWhileDemo: () => {
-        if (mode === 'demo') { backToTitle(); return true; }
-        return false;
-      }
+      isDemoMode: () => mode === 'demo'
     });
     // a background city gives the title depth: a quiet demo state, unticked
     state = newMatch('title', { demo: true });

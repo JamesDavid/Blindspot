@@ -9,6 +9,7 @@
 
   let state = null, mode = 'title';   // 'title' | 'play' | 'demo'
   let lastFrame = 0, mainSeq = 0;
+  let pausedDemo = null, demoChip = null;
   window.__warp = 1;                  // rAF-warp for film capture (§21.1)
 
   // ---------- persistence helpers (UI layer owns localStorage) ----------
@@ -55,18 +56,51 @@
     }
   }
 
+  function showDemoChip() {
+    hideDemoChip();
+    demoChip = document.createElement('button');
+    demoChip.textContent = 'TAKE THE DESK BACK ✕';
+    demoChip.setAttribute('data-key', 'exitdemo');
+    demoChip.style.cssText = 'position:absolute;left:50%;transform:translateX(-50%);' +
+      'bottom:calc(14px + env(safe-area-inset-bottom));z-index:45;background:#161922ee;' +
+      'border:1px solid #3a4152;color:#d8dde8;border-radius:10px;padding:9px 16px;' +
+      'font-size:11px;font-weight:700;letter-spacing:0.06em;';
+    demoChip.onclick = () => backToTitle();
+    document.getElementById('ui-root').appendChild(demoChip);
+  }
+  function hideDemoChip() {
+    if (demoChip) { demoChip.remove(); demoChip = null; }
+  }
+
   function startDemo() {
+    Demo.stop();
+    pausedDemo = null;
+    UI.hideOverlay();
     state = newMatch('demo-' + randomSeedString(), { demo: true });
     mode = 'demo';
     mainSeq = state.eventSeq;
     Renderer.setMatch(state);
     UI.setMatch(state);
-    UI.identity('WATCH A SHIFT — tap anywhere to take the desk back.');
+    UI.identity('WATCH A SHIFT — pan and tap around freely; the chip below hands the desk back.');
     Demo.start(state);
+    showDemoChip();
+  }
+
+  function resumeDemo() {
+    state = pausedDemo;
+    pausedDemo = null;
+    mode = 'demo';
+    mainSeq = state.eventSeq;
+    Renderer.setMatch(state);
+    UI.setMatch(state);
+    showDemoChip();
   }
 
   function backToTitle() {
-    if (Demo.isRunning()) Demo.stop();
+    // leaving the demo pauses it — the title offers RESUME WATCHING
+    if (mode === 'demo' && state && !state.verdict) pausedDemo = state;
+    else if (Demo.isRunning()) Demo.stop();
+    hideDemoChip();
     Tutorial.finish();
     mode = 'title';
     showTitle();
@@ -88,6 +122,8 @@
     const saved = loadJson(CONFIG.Save.KEY);
     UI.showTitle({
       resume: saved ? { shift: saved.shift.num, seed: saved.seed } : null,
+      resumeDemo: pausedDemo ? { shift: pausedDemo.shift.num } : null,
+      onResumeDemo: () => resumeDemo(),
       onResume: () => {
         try {
           state = SaveSystem.restore(saved);
@@ -144,6 +180,7 @@
       if (!hadVerdict && state.verdict) {
         if (mode === 'demo') {
           // the demo resets itself and keeps teaching
+          hideDemoChip();
           setTimeout(() => { if (mode === 'demo') startDemo(); }, 5200);
         } else {
           onMatchEnd();
@@ -162,10 +199,7 @@
       onAgain: () => startPlay(null),
       onBackToMenu: () => backToTitle(),
       onDialTouched: () => Tutorial.noteDialTouched(),
-      onTapWhileDemo: () => {
-        if (mode === 'demo') { backToTitle(); return true; }
-        return false;
-      }
+      isDemoMode: () => mode === 'demo'
     });
     // a background city gives the title depth: a quiet demo state, unticked
     state = newMatch('title', { demo: true });

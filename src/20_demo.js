@@ -108,7 +108,7 @@ var Demo = (() => {
           !state.cameras.some(c => c.type === 'RELAY') && state.budget >= CONFIG.Cameras.RELAY.COST;
         const buyKey = relayTurn ? 'buy-relay' : 'buy-post';
         stage('place', [
-          { delay: 0.2, fn: () => { Renderer.centerOn(site); } },
+          { delay: 0.2, fn: () => { if (Renderer.userIdleSeconds() > 6) Renderer.centerOn(site); } },
           { delay: 0.5, fn: () => {
             const s = Renderer.nodeScreen(site);
             UI.openMenu(site, s.x, s.y);
@@ -134,7 +134,7 @@ var Demo = (() => {
     const dirty = state.cameras.find(c => c.tags > 0);
     if (dirty && state.budget > CONFIG.Upgrades.CLEAN + 10 && ok('clean')) {
       stage('clean', [
-        { delay: 0.2, fn: () => Renderer.centerOn(dirty.node) },
+        { delay: 0.2, fn: () => { if (Renderer.userIdleSeconds() > 6) Renderer.centerOn(dirty.node); } },
         { delay: 0.5, fn: () => { const s = Renderer.nodeScreen(dirty.node); UI.openMenu(dirty.node, s.x, s.y); } },
         { delay: D.HIGHLIGHT_S, fn: () => lit(UI.getEl('clean')) },
         { delay: D.PRESS_S + 0.3, fn: () => {

@@ -742,6 +742,7 @@ var Renderer = (() => {
   }
 
   function notifyUserMotion() { lastUserMotion = clockMs / 1000; }
+  function userIdleSeconds() { return clockMs / 1000 - lastUserMotion; }
 
   // ---------- per-frame ----------
 
@@ -821,7 +822,7 @@ var Renderer = (() => {
 
   return {
     init, setMatch, update, resize,
-    pan, zoomBy, centerOn, notifyUserMotion,
+    pan, zoomBy, centerOn, notifyUserMotion, userIdleSeconds,
     pickNode: (px, py) => curState ? pickNode(curState, px, py) : null,
     pickObject: (px, py) => curState ? pickObject(curState, px, py) : null,
     worldToScreen, screenToGround, nodeScreen: (nodeIdx) => {

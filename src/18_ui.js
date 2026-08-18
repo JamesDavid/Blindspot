@@ -646,6 +646,13 @@ var UI = (() => {
       rb.onclick = () => { hideOverlay(); opts.onResume(); };
       o.appendChild(rb);
     }
+    if (opts.resumeDemo) {
+      const rd = h('button', 'bigbtn', `RESUME WATCHING — SHIFT ${opts.resumeDemo.shift}`);
+      rd.setAttribute('data-key', 'resumedemo');
+      rd.style.fontSize = '12px';
+      rd.onclick = () => { hideOverlay(); opts.onResumeDemo(); };
+      o.appendChild(rd);
+    }
     const sb2 = h('button', 'bigbtn primary', 'START SHIFT');
     sb2.setAttribute('data-key', 'start');
     sb2.onclick = () => { hideOverlay(); opts.onStart(seedInput.value.trim() || null); };
@@ -657,8 +664,9 @@ var UI = (() => {
     const seedrow = h('div', 'seedrow');
     const seedInput = h('input');
     seedInput.setAttribute('data-key', 'seedinput');
-    seedInput.placeholder = 'seed (blank = random)';
+    seedInput.placeholder = 'seed';
     seedInput.maxLength = 12;
+    seedInput.value = randomSeedString();   // never blank (player-directed)
     const rndb = h('button', null, 'RANDOM');
     rndb.setAttribute('data-key', 'randomseed');
     rndb.onclick = () => { seedInput.value = randomSeedString(); };
@@ -742,7 +750,12 @@ var UI = (() => {
 
   function onTap(x, y) {
     if (!state || state.verdict) return;
-    if (hooks.onTapWhileDemo && hooks.onTapWhileDemo()) return;
+    // demo mode is a guided tour, not a locked door (player-directed):
+    // pan, zoom and tap-to-name all work; only the chip hands the desk back
+    if (hooks.isDemoMode && hooks.isDemoMode()) {
+      describeTap(Renderer.pickObject(x, y));
+      return;
+    }
     if (els.menu) { closeMenu(); return; }
 
     if (relocPick !== null) {
