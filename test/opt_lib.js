@@ -15,6 +15,7 @@ const DEFAULT_GENOME = {
   wCoverage: 0.8,      // prefer poles that see many segments
   wQuality: 1.0,       // prefer poles with clean head-on reads
   wWatch: 0.5,         // prefer poles that watch other poles (§11.3)
+  wPair: 0.8,          // prefer poles ~2 hops from an existing camera — tracks need CHAINS, not scattered eyes
   thrBase: 58,         // preferred bar in calm conditions (probe: 55-60 ridge, 70 starves, 50 bleeds trust)
   thrRainDrop: 14,     // drop the bar this much while it rains
   thrExpiryDrop: 8,    // drop when evidence is about to expire unclosed
@@ -26,29 +27,50 @@ const DEFAULT_GENOME = {
   hardenAt: 160        // harden isolated poles when budget exceeds this
 };
 
-// Site score for a POST at node n. Uses only player-visible information.
-function siteScore(sb, state, n, g) {
+// Site score for a POST at node n aimed at quadrant dir. Uses only
+// player-visible information.
+function crimeSources(map) {
+  const s = map.spawnZones.slice();
+  if (map.poi) s.push(map.poi.BANK, map.poi.OFFICE, map.poi.GROCERY);
+  if (map.syndicate !== undefined) s.push(map.syndicate);
+  return s;
+}
+
+function siteScore(sb, state, n, g, dir) {
   const map = state.map;
-  const q = sb.Sightlines.quoteQuality(state, n, 'POST', 0);
+  const q = sb.Sightlines.quoteQuality(state, n, 'POST', dir || 0);
   if (!q) return -1;
   let minSpawn = Infinity;
-  for (const z of map.spawnZones) minSpawn = Math.min(minSpawn, sb.CaseSystem.nodeDist(state, n, z));
+  for (const z of crimeSources(map)) minSpawn = Math.min(minSpawn, sb.CaseSystem.nodeDist(state, n, z));
   const exitD = map.distToExit[n];
   const watch = sb.MapGen.visiblePoles(map, n);
+  // chain-building: a track needs a second camera a couple of hops
+  // downstream, so score proximity-to-network at ~2 hops
+  let nearCam = Infinity;
+  for (const cam of state.cameras) {
+    if (cam.type === 'RELAY') continue;
+    nearCam = Math.min(nearCam, sb.CaseSystem.nodeDist(state, n, cam.node));
+  }
+  const pair = nearCam === Infinity ? 0 : 1 / (1 + Math.abs(nearCam - 2));
   return g.wSpawnDist * (1 / (1 + minSpawn))
     + g.wExitDist * (1 / (1 + Math.abs(exitD - 3)))   // approaches, not the exit mouth
     + g.wCoverage * q.count / 8
     + g.wQuality * q.best / 100
-    + g.wWatch * Math.min(watch, 4) / 4;
+    + g.wWatch * Math.min(watch, 4) / 4
+    + g.wPair * pair;
 }
 
+// Best pole AND best quadrant aim for a POST (§12: aiming is the skill —
+// so the trial player must exercise it or the sweeps are dishonest).
 function bestSite(sb, state, g) {
-  let best = -1, bestScore = -Infinity;
+  let best = null, bestScore = -Infinity;
   for (const node of state.map.nodes) {
     if (node.exit || !state.map.adj[node.id].length) continue;
     if (sb.CameraSystem.camAt(state, node.id)) continue;
-    const s = siteScore(sb, state, node.id, g);
-    if (s > bestScore) { bestScore = s; best = node.id; }
+    for (let dir = 0; dir < 4; dir++) {
+      const s = siteScore(sb, state, node.id, g, dir);
+      if (s > bestScore) { bestScore = s; best = { node: node.id, dir }; }
+    }
   }
   return best;
 }
@@ -144,8 +166,8 @@ function makeTrialPlayer(sb, genome, opts) {
         const spot = bestLongSite(sb, state);
         if (spot && spend()) Actions.place(state, spot.node, 'LONG', spot.dir);
       } else if (state.budget >= sb.CONFIG.Cameras.POST.COST) {
-        const n = bestSite(sb, state, g);
-        if (n >= 0 && spend()) { if (Actions.place(state, n, 'POST').ok) mem.placed++; }
+        const s = bestSite(sb, state, g);
+        if (s && spend()) { if (Actions.place(state, s.node, 'POST', s.dir).ok) mem.placed++; }
       }
     }
 
@@ -175,8 +197,8 @@ function makeTrialPlayer(sb, genome, opts) {
         if (cam.type === 'RELAY' || state.time - cam.builtAt < g.relocIdle) continue;
         const recent = state.reads.some(r => r.camId === cam.id && r.t > cutoff);
         if (recent) continue;
-        const n = bestSite(sb, state, g);
-        if (n >= 0 && spend() && Actions.relocate(state, cam.id, n).ok) {
+        const s = bestSite(sb, state, g);
+        if (s && spend() && Actions.relocate(state, cam.id, s.node, s.dir).ok) {
           mem.relocations++;
           mem.lastReloc = state.time;
         }

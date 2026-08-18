@@ -1,4 +1,7 @@
 {
+  "training": 0,
+  "generations": 16,
+  "pop": 24,
   "genome": {
     "wSpawnDist": 1.7951847966704857,
     "wExitDist": 1.1615630869109586,
@@ -15,9 +18,7 @@
     "relayAt": 7,
     "hardenAt": 159.18831698197852
   },
-  "training": 177.76089234279243,
-  "holdout": 105.62018809650458,
-  "holdoutWins": 4,
-  "generations": 18,
-  "pop": 24
+  "holdout": 86.28562933367571,
+  "holdoutWins": 3,
+  "note": "pre-quadrant champion, re-validated"
 }

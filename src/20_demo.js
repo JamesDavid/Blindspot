@@ -113,25 +113,32 @@ var Demo = (() => {
         const relayTurn = state.cameras.length >= 4 &&
           !state.cameras.some(c => c.type === 'RELAY') && state.budget >= CONFIG.Cameras.RELAY.COST;
         const buyKey = relayTurn ? 'buy-relay' : 'buy-post';
-        stage('place', [
-          { delay: 0.2, fn: () => { if (Renderer.userIdleSeconds() > 6) Renderer.centerOn(site); } },
+        const steps = [
+          { delay: 0.2, fn: () => { if (Renderer.userIdleSeconds() > 6) Renderer.centerOn(site.node); } },
           { delay: 0.5, fn: () => {
-            const s = Renderer.nodeScreen(site);
-            UI.openMenu(site, s.x, s.y);
+            const s = Renderer.nodeScreen(site.node);
+            UI.openMenu(site.node, s.x, s.y);
           } },
           { delay: D.HIGHLIGHT_S, fn: () => lit(UI.getEl(buyKey)) },
           { delay: D.PRESS_S + 0.3, fn: () => {
             const el = UI.getEl(buyKey);
             if (pressable(el)) el.click(); else { UI.closeMenu(); blacklist.set('place', wall + CONFIG.Demo.BLACKLIST_S); }
             unlight();
-          } },
-          { delay: D.CONFIRM_S + 0.35, fn: () => lit(UI.getEl('confirm')) },
-          { delay: D.CONFIRM_S, fn: () => {
-            const el = UI.getEl('confirm');
-            if (pressable(el)) el.click(); else { UI.cancelGhost(); blacklist.set('place', wall + CONFIG.Demo.BLACKLIST_S); }
-            unlight();
           } }
-        ]);
+        ];
+        // aim the quadrant with visible TURN presses (fixed-sector doctrine)
+        if (!relayTurn) {
+          for (let t = 0; t < site.dir; t++) {
+            steps.push({ delay: 0.35, fn: () => { const el = UI.getEl('turn-cw'); if (el) { lit(el); el.click(); } } });
+          }
+        }
+        steps.push({ delay: D.CONFIRM_S + 0.35, fn: () => lit(UI.getEl('confirm')) });
+        steps.push({ delay: D.CONFIRM_S, fn: () => {
+          const el = UI.getEl('confirm');
+          if (pressable(el)) el.click(); else { UI.cancelGhost(); blacklist.set('place', wall + CONFIG.Demo.BLACKLIST_S); }
+          unlight();
+        } });
+        stage('place', steps);
         return;
       }
     }
@@ -158,13 +165,19 @@ var Demo = (() => {
     for (const n of state.map.nodes) {
       if (n.exit || !state.map.adj[n.id].length) continue;
       if (CameraSystem.camAt(state, n.id)) continue;
+      // crimes land at the zones AND the landmarks AND the syndicate block
+      const sources = state.map.spawnZones.concat(
+        state.map.poi ? [state.map.poi.BANK, state.map.poi.OFFICE, state.map.poi.GROCERY] : [],
+        [state.map.syndicate]);
       let minSpawn = Infinity;
-      for (const z of state.map.spawnZones) minSpawn = Math.min(minSpawn, CaseSystem.nodeDist(state, n.id, z));
-      const q = Sightlines.quoteQuality(state, n.id, 'POST', 0);
-      if (!q) continue;
-      const S = CONFIG.Demo.STRATEGY;
-      const score = S.W_COVERAGE * q.count / 8 + S.W_QUALITY * q.best / 100 + S.W_SPAWN / (1 + minSpawn);
-      if (score > bestScore) { bestScore = score; best = n.id; }
+      for (const z of sources) minSpawn = Math.min(minSpawn, CaseSystem.nodeDist(state, n.id, z));
+      for (let dir = 0; dir < 4; dir++) {
+        const q = Sightlines.quoteQuality(state, n.id, 'POST', dir);
+        if (!q) continue;
+        const S = CONFIG.Demo.STRATEGY;
+        const score = S.W_COVERAGE * q.count / 8 + S.W_QUALITY * q.best / 100 + S.W_SPAWN / (1 + minSpawn);
+        if (score > bestScore) { bestScore = score; best = { node: n.id, dir }; }
+      }
     }
     return best;
   }

@@ -78,33 +78,10 @@ var ShiftSystem = (() => {
       }
     }
 
-    // §14.4 — the scripted signature sequence: the Fixer strikes the
-    // camera that has produced the most evidence for the open syndicate
-    // case (falling back to the highest-coverage camera), immediately.
-    if (sh.num === CONFIG.Vandals.FIXER.FIRST_SHIFT && state.cameras.length) {
-      const synd = state.cases.find(c => c.type === 'SYNDICATE' && (c.status === 'OPEN' || c.status === 'CONTESTED'));
-      let target = null;
-      if (synd) {
-        const contrib = {};
-        for (const r of state.reads) {
-          if (r.caseId === synd.id && !r.lost) contrib[r.camId] = (contrib[r.camId] || 0) + 1;
-        }
-        let best = -1;
-        for (const camId in contrib) {
-          const cam = CameraSystem.byId(state, Number(camId));
-          if (cam && contrib[camId] > best) { best = contrib[camId]; target = cam; }
-        }
-      }
-      if (!target) {
-        let bestCov = -1;
-        for (const c of state.cameras) if (c.sight.length > bestCov) { bestCov = c.sight.length; target = c; }
-      }
-      if (target) {
-        sh.pendingVandals = sh.pendingVandals.filter(v => v.type !== 'FIXER');
-        sh.pendingVandals.push({ t: state.time + 1.0, type: 'FIXER', crewId: 'vandals-' + sh.num, forcedTargetCamId: target.id });
-        State.emit(state, { type: 'strikeIncoming' });
-      }
-      if (!state.crews['vandals-' + sh.num]) State.addCrew(state, 'vandals-' + sh.num, 'VANDAL');
+    // (the shift-5 Fixer is scripted at the TELEGRAPH — see scriptedStrike —
+    // so only unscripted fixers ride the normal schedule)
+    if (sh.num === CONFIG.Vandals.FIXER.FIRST_SHIFT) {
+      sh.pendingVandals = sh.pendingVandals.filter(v => v.type !== 'FIXER');
     }
 
     // High trust: the tip line rings EARLY — spawn zones flagged at the
@@ -197,6 +174,45 @@ var ShiftSystem = (() => {
     State.emit(state, { type: 'shift', num: sh.num, overtime: sh.overtime, mood: moodLine(state) });
   }
 
+  // §14.4 — the scripted signature strike, fired at the shift-5 TELEGRAPH:
+  // the Fixer is already in position (he cased the pole before the job),
+  // two blocks from the camera carrying the syndicate case, so the pole
+  // falls while its footage is still pending — CASE AT RISK, then the
+  // recovery. Firing at the telegraph is what makes the beat reliable: a
+  // well-covered board can otherwise close the case before he arrives.
+  function scriptedStrike(state) {
+    if (!state.cameras.length) return;
+    const synd = state.cases.find(c => c.type === 'SYNDICATE' && (c.status === 'OPEN' || c.status === 'CONTESTED'));
+    let target = null;
+    if (synd) {
+      const contrib = {};
+      for (const r of state.reads) {
+        if (r.caseId === synd.id && !r.lost) contrib[r.camId] = (contrib[r.camId] || 0) + 1;
+      }
+      let best = -1;
+      for (const camId in contrib) {
+        const cam = CameraSystem.byId(state, Number(camId));
+        if (cam && contrib[camId] > best) { best = contrib[camId]; target = cam; }
+      }
+    }
+    if (!target) {
+      let bestCov = -1;
+      for (const c of state.cameras) if (c.sight.length > bestCov) { bestCov = c.sight.length; target = c; }
+    }
+    if (!target) return;
+    const crewId = 'vandals-' + CONFIG.Vandals.FIXER.FIRST_SHIFT;
+    if (!state.crews[crewId]) State.addCrew(state, crewId, 'VANDAL');
+    // pre-positioned: a road node two hops from the pole
+    const near = MapGen.bfsMulti(state.map, [target.node]);
+    let from = target.node;
+    for (const n of state.map.nodes) {
+      if (near[n.id] === 2 && state.map.adj[n.id].length) { from = n.id; break; }
+    }
+    State.emit(state, { type: 'strikeIncoming' });
+    VandalSystem.spawn(state, 'FIXER', crewId, target.id, from);
+    State.log(state, 'Someone has been casing your best pole.', null);
+  }
+
   function tick(state, dt) {
     const sh = state.shift;
     if (state.verdict) return;
@@ -208,6 +224,10 @@ var ShiftSystem = (() => {
       sh.telegraphed = true;
       LadderSystem.tally(state);
       State.emit(state, { type: 'telegraph', nextShift: sh.num + 1, mood: moodLine(state) });
+      if (sh.num + 1 === CONFIG.Vandals.FIXER.FIRST_SHIFT && !sh._struck) {
+        sh._struck = true;
+        scriptedStrike(state);
+      }
     }
     if (state.time >= sh.nextAt) startShift(state);
     if (state.verdict) return;

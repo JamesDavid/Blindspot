@@ -23,6 +23,7 @@ var CONFIG = Object.freeze({
     RAIN_PENALTY: 20,               // spec-authored: forces the threshold to move at shift 6
     DEGRADE_PER_TAG: 15,            // spec-authored
     DEGRADE_FLOOR: 25,              // spec-authored: a degraded camera never goes silent — it lies
+    PER_VEHICLE_COOLDOWN: 6.0,      // player-directed: one read per camera per pass — a pole cannot triple-read the same car in seconds
     CLARITY: 75,                    // judgment-tuned: reads below this are ambiguous and can misattach to an open case (§7.1's trap)
     MISREAD_BASE: 0.75,             // swept (A/B in opt_threshold work): at 0.5 a LAX bar won cleanly (trap toothless); 0.75 gives the intended ridge — 45 punished, 55 best, 65 starved
     MISREAD_MAX_DIST: 3             // judgment-tuned: ambiguous sightings only misattach near the crime scene — believable lies, not cross-town ones
@@ -36,8 +37,12 @@ var CONFIG = Object.freeze({
 
   Cases: {
     READS_TO_CLOSE: 3,              // swept (test/opt_lifetime.js): 2 scores lower everywhere, 4 dips at mid lifetimes; 3 is the ridge
+    MIN_TRACK_CAMS: 2,              // player-directed: corroboration means TRACKING — the closing triple must span distinct cameras across the city (vandal cases exempt: a witnessed pole is one scene, not a chase)
+    ANCHOR_DIST: 6,                 // player-directed: the chain starts AT the scene — the earliest closing read must come from a camera within this many blocks of the crime; the last read is where they're taken down
+    SECOND_RUN_AT: 0.4,             // fraction of the lifetime after which the suspect is seen driving again — without a second pass, one crime could never produce a multi-camera track
+    ENGAGED_AT: 2,                  // player-directed-era rebalance: clearance judges files the network actually worked (≥ this many reads, or a surfaced card); a file with no real lead lapses quietly — the city is bigger than the network
     CLOSURE_CONFIDENCE_SUM: 210,    // spec-authored: three serviceable reads or two clean ones plus a poor one
-    LIFETIME_SECONDS: 75,           // swept (test/opt_lifetime.js): best cell at 75x3 (60.6); 55 rushes, 110 sags
+    LIFETIME_SECONDS: 90,           // re-swept (test/opt_lifetime.js) after quadrant cameras: 90x3 (51.0) now clearly beats 75x3 (41.2) — narrower sectors need longer files; the optimum moved with the mechanics again
     CONTESTED_BAND: 12,             // judgment-tuned: width of the near-bar band that surfaces a card
     CONTESTED_PER_SHIFT_MIN: 2,     // spec-authored: enough to matter
     CONTESTED_PER_SHIFT_MAX: 4,     // spec-authored: few enough to stay a judgement call
@@ -55,7 +60,7 @@ var CONFIG = Object.freeze({
   },
 
   Cameras: {
-    POST:  { COST: 40, RANGE: 2, DIRECTIONS: 4, CONF_MOD: 0 },    // spec-authored: the workhorse
+    POST:  { COST: 30, RANGE: 2, DIRECTIONS: 2, CONF_MOD: 0 },    // player-directed: quadrant-aimed at placement (two adjacent rays), fixed-sector doctrine; buildings occlude — vision runs along street corridors only. Cost re-priced 40→30 for the halved sector (sweep below)
     LONG:  { COST: 60, RANGE: 5, DIRECTIONS: 1, CONF_MOD: 10 },   // spec-authored: aimed at placement, forever
     DOME:  { COST: 55, RANGE: 1, DIRECTIONS: 4, CONF_MOD: -8 },   // spec-authored: many angles, poor reads
     RELAY: { COST: 35, RANGE: 0, DIRECTIONS: 0, CONF_MOD: 0 },    // spec-authored: continuous upload for neighbours, nothing else
@@ -86,7 +91,17 @@ var CONFIG = Object.freeze({
     FORGET_SECONDS: 100.0,          // spec-authored: crews forget; a well-played match must keep having crime on it
     AVOID_WEIGHT: 3.0,              // spec-authored: route weight multiplier on segments a KNOWN camera watches
     MAX_AVOIDED_FRACTION: 0.6,      // spec-authored: no crew may route around more than this much of the network
-    RELEARN_COOLDOWN: 12.0          // spec-authored (§13.3): re-weight at most once per this
+    RELEARN_COOLDOWN: 12.0,         // spec-authored (§13.3): re-weight at most once per this
+    // Per-crew individuality (player-directed): every crew samples its own
+    // tuning from these bands — one learns fast, one is careless, one is
+    // stubborn about its routes. Deterministic per seed; the syndicate
+    // skews professional. A runtime GA per criminal was considered and
+    // rejected (§30's legibility rule): a trait a log line can name beats
+    // a policy nobody can read.
+    TRAIT_LEARN: [0.7, 1.5],        // multiplies learning/forgetting speed
+    TRAIT_AVOID: [0.7, 1.4],        // multiplies route-avoidance weight
+    TRAIT_BOLD: [0.8, 1.3],         // divides memory span — bold crews forget your cameras sooner
+    SYNDICATE_PRO: 0.25             // added to the syndicate crew's learn trait: professionals case the block
   },
 
   Traffic: {
@@ -98,7 +113,7 @@ var CONFIG = Object.freeze({
 
   Economy: {
     START_BUDGET: 200,              // player-directed ("way too low" at 120), then CONFIRMED by re-sweep: after the pacing raise the grid inverted — richer starts now score higher (the denser city needs eyes sooner). The optimum moved with the mechanics, as it always does.
-    PAYOUT_PETTY: 25, PAYOUT_MAJOR: 60, PAYOUT_SYNDICATE: 90, // spec-authored, scaled by severity
+    PAYOUT_PETTY: 38, PAYOUT_MAJOR: 90, PAYOUT_SYNDICATE: 135, // re-priced x1.5 for the tracking era (probe): a conviction now takes a multi-camera chain, so it pays like one
     CLEARANCE_START: 70,            // spec-authored
     CLEARANCE_FLOOR: 35,            // spec-authored: fall below and you are relieved
     CLEARANCE_PRIOR: 10,            // judgment-tuned: pseudo-count seeding the rolling percentage so one early cold case is not lethal
@@ -151,8 +166,8 @@ var CONFIG = Object.freeze({
     TIERS: [
       { name: 'QUIET',    crimeMult: 0.7, vandalMult: 0.6, learnMult: 0.6, contestedMult: 0.8 }, // hand-authored soft: the tier protects struggling players; evolution never explores this corner
       { name: 'RESTLESS', crimeMult: 1.0, vandalMult: 1.0, learnMult: 1.0, contestedMult: 1.0 }, // the authored baseline every sweep runs at
-      { name: 'BRAZEN',   crimeMult: 1.2, vandalMult: 1.5, learnMult: 1.1, contestedMult: 1.1 }, // interpolated RESTLESS→LAWLESS to keep the ladder monotone (raw grade had vandal<1, illegible for a harder mood)
-      { name: 'LAWLESS',  crimeMult: 1.43, vandalMult: 2.07, learnMult: 1.23, contestedMult: 1.21 } // evolution-graded (test/evolve_opposition.js): holds the champion to fit 98 vs ~150 at baseline
+      { name: 'BRAZEN',   crimeMult: 1.15, vandalMult: 1.35, learnMult: 1.8, contestedMult: 1.3 }, // graded midpoint; crime/vandal floored monotone for mood legibility
+      { name: 'LAWLESS',  crimeMult: 1.35, vandalMult: 1.7, learnMult: 2.5, contestedMult: 1.5 } // re-graded under quadrant rules (test/evolve_opposition.js): evolution's discovery is that LEARNING SPEED is the weapon against aimed sectors — learn 2.5 holds the champion to fit 59 vs 164; crime/vandal floored monotone for the mood line
     ],
     START_TIER: 1,                  // spec-authored: open at RESTLESS
     DDA_FROM_SHIFT: 2,              // spec-authored

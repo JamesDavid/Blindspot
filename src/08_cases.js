@@ -60,9 +60,14 @@ var CaseSystem = (() => {
   }
 
   // Best coherent triple by confidence sum; also reports whether any
-  // contradictory pair exists in the evidence set.
-  function grade(state, evidence) {
+  // contradictory pair exists in the evidence set. A valid triple is a
+  // TRACK (player-directed): it spans distinct cameras, and its earliest
+  // read comes from near the scene — picked up where it happened,
+  // followed across the city, taken down at the last pole.
+  function grade(state, evidence, opts) {
+    opts = opts || {};
     const K = CONFIG.Cases.READS_TO_CLOSE;
+    const minCams = opts.minCams !== undefined ? opts.minCams : CONFIG.Cases.MIN_TRACK_CAMS;
     const E = evidence.slice().sort((a, b) => b.conf - a.conf).slice(0, 10);
     let contradiction = false;
     for (let i = 0; i < E.length; i++) for (let j = i + 1; j < E.length; j++) {
@@ -78,6 +83,9 @@ var CaseSystem = (() => {
             if (!pairCoherent(state, triple[i], triple[i + 1])) return;
           }
           if (!pairCoherent(state, triple[0], triple[triple.length - 1])) return;
+          if (new Set(triple.map(r => r.camId)).size < minCams) return;
+          if (opts.anchorNode !== undefined &&
+              nodeDist(state, camNode(state, triple[0]), opts.anchorNode) > CONFIG.Cases.ANCHOR_DIST) return;
           const sum = triple.reduce((s, r) => s + r.conf, 0);
           if (sum > bestSum) { bestSum = sum; best = triple; }
           return;
@@ -89,16 +97,52 @@ var CaseSystem = (() => {
     return { best, bestSum, contradiction, count: evidence.length };
   }
 
+  // grading options for a case: vandal files are one witnessed scene,
+  // everything else must be a cross-town track anchored at the crime
+  function gradeOpts(kase) {
+    return kase.type === 'VANDAL' ? { minCams: 1 } : { anchorNode: kase.spawnNode };
+  }
+
   // ---- crimes ----
+
+  // Specific crimes at recognisable places (player-directed): the kind
+  // and the landmark come from where it happened, and the tip line says
+  // what the witness actually saw.
+  const PETTY_KINDS = {
+    HOUSES: ['BREAK-IN', 'THE ROW HOUSES'],
+    APARTMENTS: ['MUGGING', 'THE APARTMENTS'],
+    DOWNTOWN: ['CAR THEFT', 'DOWNTOWN'],
+    SYNDICATE: ['SHAKEDOWN', 'THE SYNDICATE BLOCK'],
+    BANK: ['PURSE SNATCHING', 'THE BANK STEPS'],
+    OFFICE: ['SMASH-AND-GRAB', 'THE OFFICE TOWER'],
+    GROCERY: ['SHOPLIFTING', 'THE GROCERY STORE']
+  };
+  const TIP_VERBS = {
+    'BANK ROBBERY': 'rob', 'OFFICE BURGLARY': 'hit', 'ARMED ROBBERY': 'hold up',
+    'SHOPLIFTING': 'run from', 'MUGGING': 'flee', 'BREAK-IN': 'leave',
+    'CAR THEFT': 'boost a car near', 'SHAKEDOWN': 'work', 'PURSE SNATCHING': 'strike at',
+    'SMASH-AND-GRAB': 'hit', 'SYNDICATE HEIST': 'clean out'
+  };
 
   function openCrime(state, type) {
     const rng = () => State.rngNext(state, 'crimes');
-    let spawnNode;
+    let spawnNode, kind, landmark;
     if (type === 'SYNDICATE') {
       spawnNode = state.map.syndicate;
+      kind = 'SYNDICATE HEIST'; landmark = 'THE SYNDICATE BLOCK';
+    } else if (type === 'MAJOR') {
+      const r = rng();
+      const pick = r < 0.4 ? ['BANK', 'BANK ROBBERY', 'THE BANK']
+        : r < 0.7 ? ['OFFICE', 'OFFICE BURGLARY', 'THE OFFICE TOWER']
+        : ['GROCERY', 'ARMED ROBBERY', 'THE GROCERY STORE'];
+      spawnNode = state.map.poi[pick[0]];
+      kind = pick[1]; landmark = pick[2];
     } else {
       const zones = state.map.spawnZones;
       spawnNode = zones[Math.floor(rng() * zones.length)];
+      const district = state.map.districts[spawnNode] || 'HOUSES';
+      const k = PETTY_KINDS[district] || ['THEFT', 'THE ' + district];
+      kind = k[0]; landmark = k[1];
     }
     const crewId = type === 'SYNDICATE' ? 'syndicate'
       : type === 'MAJOR' ? 'major-a'
@@ -118,12 +162,16 @@ var CaseSystem = (() => {
       if (type === 'SYNDICATE' && !crew.plate) crew.plate = makePlate(() => State.rngNext(state, 'plates'));
       kase = {
         id: state.nextCaseId++, type, plate: crew.plate, crewId,
+        kind, landmark,
         spawnNode, openedAt: state.time,
         coldAt: state.time + CONFIG.Cases.LIFETIME_SECONDS,
         status: 'OPEN', riskAnnounced: false, atRiskUntil: 0,
         closedTriple: null, falseCharge: false, contested: null,
         _peakUsable: 0
       };
+      // the witness saw the actual car — usually well, sometimes vaguely
+      kase.witnessDesc = witnessDescription(carIdentity(kase.plate),
+        State.rngNext(state, 'witness'), State.rngNext(state, 'witness'));
       state.cases.push(kase);
     }
 
@@ -133,12 +181,14 @@ var CaseSystem = (() => {
     const exit = exits[weightedIndex(weights, rng())];
     const veh = Traffic.spawnVehicle(state, 'SUSPECT', spawnNode, exit, crewId, kase.id, kase.plate);
 
-    State.emit(state, { type: 'crime', crimeType: type, node: spawnNode, caseId: kase.id });
-    // every reported crime rings the tip line (player-directed); high
-    // trust gets the tip EARLY, at the telegraph, before the car moves
+    State.emit(state, { type: 'crime', crimeType: type, node: spawnNode, caseId: kase.id, kind });
+    // every reported crime rings the tip line (player-directed) with what
+    // the witness actually saw; high trust gets zones flagged EARLY at the
+    // telegraph, before the car moves
     state.stats.tips++;
     State.emit(state, { type: 'tip', node: spawnNode, caseId: kase.id, early: false });
-    State.log(state, 'Tip line: ' + type.toLowerCase() + ' reported near intersection ' + spawnNode + '.', 'first-tip');
+    const verb = TIP_VERBS[kind] || 'flee';
+    State.log(state, 'Tip line: saw a ' + kase.witnessDesc + ' ' + verb + ' ' + landmark + '!', null);
     return kase;
   }
 
@@ -152,6 +202,7 @@ var CaseSystem = (() => {
         read.caseId = kase.id;
         read.trueMatch = true;
         read.plate = kase.plate;
+        kase._leads = (kase._leads || 0) + 1;
       }
       return;
     }
@@ -178,6 +229,7 @@ var CaseSystem = (() => {
       read.caseId = best.id;
       read.trueMatch = false;
       read.plate = best.plate;        // the misread "looks like" the suspect plate
+      best._leads = (best._leads || 0) + 1;
       state.stats.falseAttached++;
     }
   }
@@ -207,8 +259,15 @@ var CaseSystem = (() => {
     kase.falseCharge = falseCount >= CONFIG.Cases.FALSE_MAJORITY;
     state.clrClosed += 1;                  // the arrest is what clearance counts
     state.stats.closures++;
-    State.emit(state, { type: 'arrest', caseId: kase.id, via: kase.via });
-    State.log(state, 'Corroborated. Arrest made — ' + kase.plate + '.', 'first-arrest');
+    // the last read in the track is where they're taken down
+    const last = (triple || []).slice().sort((a, b) => a.t - b.t).pop();
+    kase.arrestNode = last ? camNode(state, last) : kase.spawnNode;
+    const where = state.map.districts ? state.map.districts[kase.arrestNode] : null;
+    const PHRASE = { DOWNTOWN: 'downtown', APARTMENTS: 'by the apartments', HOUSES: 'in the row houses',
+      BANK: 'outside the bank', OFFICE: 'by the office tower', GROCERY: 'at the grocery store',
+      SYNDICATE: 'on the syndicate block' };
+    State.emit(state, { type: 'arrest', caseId: kase.id, via: kase.via, node: kase.arrestNode });
+    State.log(state, 'Tracked and taken down ' + (PHRASE[where] || 'mid-route') + ' — ' + kase.plate + '.', null);
 
     // an arrest takes the vandal crew off the board immediately
     if (kase.type === 'VANDAL') {
@@ -265,7 +324,23 @@ var CaseSystem = (() => {
     }
   }
 
+  // Clearance judges the cases you ENGAGED (player-directed rebalance for
+  // the tracking era): a file with zero qualifying reads lapses quietly —
+  // the city is bigger than the network, and that is not the analyst's
+  // failure. Losing a lead you HAD still costs.
   function goCold(state, kase, reason) {
+    // the "city is bigger than the network" mercy requires HAVING a
+    // network: with no working cameras, every cold crime is on you —
+    // which is also what lets a refused Review still end (§16.1)
+    const hasNetwork = state.cameras.some(c => c.type !== 'RELAY');
+    const engaged = !hasNetwork ||
+      (kase._leads || 0) >= CONFIG.Cases.ENGAGED_AT || kase.status === 'CONTESTED';
+    if (!engaged) {
+      kase.status = 'LAPSED';
+      state.stats.lapsed = (state.stats.lapsed || 0) + 1;
+      State.emit(state, { type: 'caseCold', caseId: kase.id, reason: 'no-leads' });
+      return;
+    }
     kase.status = 'COLD';
     state.clrCold += 1;
     state.stats.colds++;
@@ -279,7 +354,7 @@ var CaseSystem = (() => {
     if (!kase) return { ok: false, reason: 'NO SUCH CASE' };
     if (kase.status !== 'CONTESTED') return { ok: false, reason: 'NOT CONTESTED' };
     const ev = usableEvidence(state, kase);
-    const g = grade(state, ev);
+    const g = grade(state, ev, gradeOpts(kase));
     const graded = g.best || ev.slice().sort((a, b) => b.conf - a.conf).slice(0, CONFIG.Cases.READS_TO_CLOSE);
     const majorityTrue = graded.filter(r => r.trueMatch).length > graded.length / 2;
     state.stats.contestedResolved++;
@@ -313,6 +388,22 @@ var CaseSystem = (() => {
     for (const kase of state.cases) {
       if (kase.status === 'ARREST' && state.time >= kase.convictAt) resolveConviction(state, kase);
       if (kase.status !== 'OPEN' && kase.status !== 'CONTESTED') continue;
+
+      // the suspect drives again mid-lifetime (player-directed tracking):
+      // one crime is one pass; the second sighting is what lets two
+      // cameras build a cross-town track. Syndicate re-runs via its
+      // repeat jobs; vandal scenes don't drive.
+      if (kase.type !== 'VANDAL' && kase.type !== 'SYNDICATE' && !kase._secondRun &&
+          state.time >= kase.openedAt + CONFIG.Cases.LIFETIME_SECONDS * CONFIG.Cases.SECOND_RUN_AT) {
+        kase._secondRun = true;
+        const exits = state.map.exits;
+        const exit = exits[Math.floor(State.rngNext(state, 'crimes') * exits.length)];
+        const veh = Traffic.spawnVehicle(state, 'SUSPECT', kase.spawnNode, exit, kase.crewId, kase.id, kase.plate);
+        if (veh) {
+          State.emit(state, { type: 'tip', node: kase.spawnNode, caseId: kase.id, early: false });
+          State.log(state, 'Seen again near ' + (kase.landmark || 'the scene') + ' — ' + (kase.witnessDesc || kase.plate) + '.', null);
+        }
+      }
       const ev = usableEvidence(state, kase);
 
       // §14.4: evidence loss makes the wall visible
@@ -334,7 +425,7 @@ var CaseSystem = (() => {
         }
       }
 
-      const g = grade(state, ev);
+      const g = grade(state, ev, gradeOpts(kase));
       const S = CONFIG.Cases.CLOSURE_CONFIDENCE_SUM;
 
       if (kase.status === 'OPEN') {
@@ -378,7 +469,7 @@ var CaseSystem = (() => {
     }
   }
 
-  return { byId, openCrime, attachRead, tick, close, goCold, usableEvidence, grade, nodeDist, pairCoherent, contradictionPairs };
+  return { byId, openCrime, attachRead, tick, close, goCold, usableEvidence, grade, gradeOpts, nodeDist, pairCoherent, contradictionPairs };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { CaseSystem };

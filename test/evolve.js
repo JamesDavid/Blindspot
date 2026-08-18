@@ -89,8 +89,13 @@ async function evalPopulation(pop, seeds, workers) {
   console.log(`champion holdout: fit=${champHold.fit.toFixed(1)} wins=${champHold.wins}/${GA.HOLDOUT_SEEDS.length}`);
   console.log(`hand-authored holdout: fit=${defaultHold.fit.toFixed(1)} wins=${defaultHold.wins}/${GA.HOLDOUT_SEEDS.length}`);
 
+  // the incumbent defends its crown under TODAY'S rules — a stored holdout
+  // from an older ruleset is not a defense (§0.9: mechanics changes
+  // re-price everything, champions included)
   const incumbent = fs.existsSync(CHAMPION) ? JSON.parse(fs.readFileSync(CHAMPION, 'utf8')) : null;
-  if (!incumbent || champHold.fit > incumbent.holdout) {
+  const incumbentNow = incumbent ? evalOn(incumbent.genome) : null;
+  if (incumbentNow) console.log(`incumbent re-scored under current rules: fit=${incumbentNow.fit.toFixed(1)} wins=${incumbentNow.wins}/${GA.HOLDOUT_SEEDS.length}`);
+  if (!incumbent || champHold.fit > incumbentNow.fit) {
     fs.writeFileSync(CHAMPION, JSON.stringify({
       genome: best.genome, training: best.fitness, holdout: champHold.fit,
       holdoutWins: champHold.wins, generations: GENS, pop: POP

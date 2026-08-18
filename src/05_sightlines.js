@@ -6,7 +6,9 @@
 
 var Sightlines = (() => {
 
-  const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // E, S, W, N (dir index for the Long)
+  const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // E, S, W, N
+  const QUADRANT_NAMES = ['SE', 'SW', 'NW', 'NE'];  // POST aim labels (ray pairs E+S, S+W, W+N, N+E)
+  const DIR_NAMES = ['EAST', 'SOUTH', 'WEST', 'NORTH'];
 
   function segBetween(map, a, b) {
     for (const e of map.adj[a]) if (e.node === b) return e.seg;
@@ -14,11 +16,14 @@ var Sightlines = (() => {
   }
 
   // Sightline entries: { seg, dist, oblique } — dist is 1-indexed segments
-  // from the pole, oblique marks cross-traffic seen at an angle.
-  // POST: rays in 4 directions, range 2, plus oblique crossings at ray nodes.
+  // from the pole, oblique marks cross-traffic seen at an angle. Vision
+  // travels along street corridors only: buildings occlude everything
+  // else, and a ray stops where the road does.
+  // POST: aimed QUADRANT — two adjacent rays (E+S, S+W, W+N, N+E), range
+  //       2, plus oblique crossings at ray nodes. Aimed at placement,
+  //       forever — fixed-sector doctrine.
   // LONG: one aimed ray, range 5, no obliques — a narrow corridor.
-  // DOME: all incident segments head-on at dist 1, plus obliques at the
-  //       neighbouring nodes — many angles, poor reads.
+  // DOME: all four rays at range 1 plus obliques — the unaimed corner unit.
   // RELAY: sees nothing.
   function compute(map, nodeIdx, type, dir) {
     const spec = CONFIG.Cameras[type];
@@ -26,7 +31,10 @@ var Sightlines = (() => {
     if (!spec || spec.RANGE === 0) return out;
     const seen = new Set();
     const node = map.nodes[nodeIdx];
-    const dirs = spec.DIRECTIONS === 1 ? [DIRS[dir || 0]] : DIRS;
+    const d0 = dir || 0;
+    const dirs = spec.DIRECTIONS === 1 ? [DIRS[d0]]
+      : spec.DIRECTIONS === 2 ? [DIRS[d0], DIRS[(d0 + 1) % 4]]
+      : DIRS;
 
     for (const [dx, dy] of dirs) {
       let x = node.x, y = node.y, cur = nodeIdx;
@@ -113,7 +121,13 @@ var Sightlines = (() => {
     return excludeCamId === undefined ? l : l.filter(id => id !== excludeCamId);
   }
 
-  return { compute, baseConfidence, liveConfidence, quoteQuality, rebuildCoverage, camerasWatchingNode, DIRS };
+  function aimLabel(type, dir) {
+    const spec = CONFIG.Cameras[type];
+    if (!spec || spec.RANGE === 0 || spec.DIRECTIONS >= 4) return null;
+    return spec.DIRECTIONS === 1 ? DIR_NAMES[dir || 0] : QUADRANT_NAMES[dir || 0];
+  }
+
+  return { compute, baseConfidence, liveConfidence, quoteQuality, rebuildCoverage, camerasWatchingNode, aimLabel, DIRS, QUADRANT_NAMES, DIR_NAMES };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { Sightlines };

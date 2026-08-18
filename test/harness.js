@@ -34,4 +34,15 @@ function patchNumber(code, key, value) {
   return code.replace(re, `$1${value}`);
 }
 
-module.exports = { makeSandbox, patchNumber };
+// Place a quadrant POST with the aim that covers the most road — the
+// simple-controller tests use this so their cameras actually see traffic.
+function aimedPlace(sb, state, nodeIdx) {
+  let bestDir = 0, bestCount = -1;
+  for (let d = 0; d < 4; d++) {
+    const n = sb.Sightlines.compute(state.map, nodeIdx, 'POST', d).length;
+    if (n > bestCount) { bestCount = n; bestDir = d; }
+  }
+  return sb.Actions.place(state, nodeIdx, 'POST', bestDir);
+}
+
+module.exports = { makeSandbox, patchNumber, aimedPlace };

@@ -22,7 +22,7 @@
 <script>
 'use strict';
 /* BLIND SPOT — a camera-network tower defense prototype. */
-window.BUILDSTAMP = 'BUILD 2026-08-18 01:40 UTC';
+window.BUILDSTAMP = 'BUILD 2026-08-18 03:11 UTC';
 
 // ============================================================
 // CONFIG
@@ -53,6 +53,7 @@ var CONFIG = Object.freeze({
     RAIN_PENALTY: 20,               // spec-authored: forces the threshold to move at shift 6
     DEGRADE_PER_TAG: 15,            // spec-authored
     DEGRADE_FLOOR: 25,              // spec-authored: a degraded camera never goes silent — it lies
+    PER_VEHICLE_COOLDOWN: 6.0,      // player-directed: one read per camera per pass — a pole cannot triple-read the same car in seconds
     CLARITY: 75,                    // judgment-tuned: reads below this are ambiguous and can misattach to an open case (§7.1's trap)
     MISREAD_BASE: 0.75,             // swept (A/B in opt_threshold work): at 0.5 a LAX bar won cleanly (trap toothless); 0.75 gives the intended ridge — 45 punished, 55 best, 65 starved
     MISREAD_MAX_DIST: 3             // judgment-tuned: ambiguous sightings only misattach near the crime scene — believable lies, not cross-town ones
@@ -66,8 +67,12 @@ var CONFIG = Object.freeze({
 
   Cases: {
     READS_TO_CLOSE: 3,              // swept (test/opt_lifetime.js): 2 scores lower everywhere, 4 dips at mid lifetimes; 3 is the ridge
+    MIN_TRACK_CAMS: 2,              // player-directed: corroboration means TRACKING — the closing triple must span distinct cameras across the city (vandal cases exempt: a witnessed pole is one scene, not a chase)
+    ANCHOR_DIST: 6,                 // player-directed: the chain starts AT the scene — the earliest closing read must come from a camera within this many blocks of the crime; the last read is where they're taken down
+    SECOND_RUN_AT: 0.4,             // fraction of the lifetime after which the suspect is seen driving again — without a second pass, one crime could never produce a multi-camera track
+    ENGAGED_AT: 2,                  // player-directed-era rebalance: clearance judges files the network actually worked (≥ this many reads, or a surfaced card); a file with no real lead lapses quietly — the city is bigger than the network
     CLOSURE_CONFIDENCE_SUM: 210,    // spec-authored: three serviceable reads or two clean ones plus a poor one
-    LIFETIME_SECONDS: 75,           // swept (test/opt_lifetime.js): best cell at 75x3 (60.6); 55 rushes, 110 sags
+    LIFETIME_SECONDS: 90,           // re-swept (test/opt_lifetime.js) after quadrant cameras: 90x3 (51.0) now clearly beats 75x3 (41.2) — narrower sectors need longer files; the optimum moved with the mechanics again
     CONTESTED_BAND: 12,             // judgment-tuned: width of the near-bar band that surfaces a card
     CONTESTED_PER_SHIFT_MIN: 2,     // spec-authored: enough to matter
     CONTESTED_PER_SHIFT_MAX: 4,     // spec-authored: few enough to stay a judgement call
@@ -85,7 +90,7 @@ var CONFIG = Object.freeze({
   },
 
   Cameras: {
-    POST:  { COST: 40, RANGE: 2, DIRECTIONS: 4, CONF_MOD: 0 },    // spec-authored: the workhorse
+    POST:  { COST: 30, RANGE: 2, DIRECTIONS: 2, CONF_MOD: 0 },    // player-directed: quadrant-aimed at placement (two adjacent rays), fixed-sector doctrine; buildings occlude — vision runs along street corridors only. Cost re-priced 40→30 for the halved sector (sweep below)
     LONG:  { COST: 60, RANGE: 5, DIRECTIONS: 1, CONF_MOD: 10 },   // spec-authored: aimed at placement, forever
     DOME:  { COST: 55, RANGE: 1, DIRECTIONS: 4, CONF_MOD: -8 },   // spec-authored: many angles, poor reads
     RELAY: { COST: 35, RANGE: 0, DIRECTIONS: 0, CONF_MOD: 0 },    // spec-authored: continuous upload for neighbours, nothing else
@@ -116,7 +121,17 @@ var CONFIG = Object.freeze({
     FORGET_SECONDS: 100.0,          // spec-authored: crews forget; a well-played match must keep having crime on it
     AVOID_WEIGHT: 3.0,              // spec-authored: route weight multiplier on segments a KNOWN camera watches
     MAX_AVOIDED_FRACTION: 0.6,      // spec-authored: no crew may route around more than this much of the network
-    RELEARN_COOLDOWN: 12.0          // spec-authored (§13.3): re-weight at most once per this
+    RELEARN_COOLDOWN: 12.0,         // spec-authored (§13.3): re-weight at most once per this
+    // Per-crew individuality (player-directed): every crew samples its own
+    // tuning from these bands — one learns fast, one is careless, one is
+    // stubborn about its routes. Deterministic per seed; the syndicate
+    // skews professional. A runtime GA per criminal was considered and
+    // rejected (§30's legibility rule): a trait a log line can name beats
+    // a policy nobody can read.
+    TRAIT_LEARN: [0.7, 1.5],        // multiplies learning/forgetting speed
+    TRAIT_AVOID: [0.7, 1.4],        // multiplies route-avoidance weight
+    TRAIT_BOLD: [0.8, 1.3],         // divides memory span — bold crews forget your cameras sooner
+    SYNDICATE_PRO: 0.25             // added to the syndicate crew's learn trait: professionals case the block
   },
 
   Traffic: {
@@ -128,7 +143,7 @@ var CONFIG = Object.freeze({
 
   Economy: {
     START_BUDGET: 200,              // player-directed ("way too low" at 120), then CONFIRMED by re-sweep: after the pacing raise the grid inverted — richer starts now score higher (the denser city needs eyes sooner). The optimum moved with the mechanics, as it always does.
-    PAYOUT_PETTY: 25, PAYOUT_MAJOR: 60, PAYOUT_SYNDICATE: 90, // spec-authored, scaled by severity
+    PAYOUT_PETTY: 38, PAYOUT_MAJOR: 90, PAYOUT_SYNDICATE: 135, // re-priced x1.5 for the tracking era (probe): a conviction now takes a multi-camera chain, so it pays like one
     CLEARANCE_START: 70,            // spec-authored
     CLEARANCE_FLOOR: 35,            // spec-authored: fall below and you are relieved
     CLEARANCE_PRIOR: 10,            // judgment-tuned: pseudo-count seeding the rolling percentage so one early cold case is not lethal
@@ -181,8 +196,8 @@ var CONFIG = Object.freeze({
     TIERS: [
       { name: 'QUIET',    crimeMult: 0.7, vandalMult: 0.6, learnMult: 0.6, contestedMult: 0.8 }, // hand-authored soft: the tier protects struggling players; evolution never explores this corner
       { name: 'RESTLESS', crimeMult: 1.0, vandalMult: 1.0, learnMult: 1.0, contestedMult: 1.0 }, // the authored baseline every sweep runs at
-      { name: 'BRAZEN',   crimeMult: 1.2, vandalMult: 1.5, learnMult: 1.1, contestedMult: 1.1 }, // interpolated RESTLESS→LAWLESS to keep the ladder monotone (raw grade had vandal<1, illegible for a harder mood)
-      { name: 'LAWLESS',  crimeMult: 1.43, vandalMult: 2.07, learnMult: 1.23, contestedMult: 1.21 } // evolution-graded (test/evolve_opposition.js): holds the champion to fit 98 vs ~150 at baseline
+      { name: 'BRAZEN',   crimeMult: 1.15, vandalMult: 1.35, learnMult: 1.8, contestedMult: 1.3 }, // graded midpoint; crime/vandal floored monotone for mood legibility
+      { name: 'LAWLESS',  crimeMult: 1.35, vandalMult: 1.7, learnMult: 2.5, contestedMult: 1.5 } // re-graded under quadrant rules (test/evolve_opposition.js): evolution's discovery is that LEARNING SPEED is the weapon against aimed sectors — learn 2.5 holds the champion to fit 59 vs 164; crime/vandal floored monotone for the mood line
     ],
     START_TIER: 1,                  // spec-authored: open at RESTLESS
     DDA_FROM_SHIFT: 2,              // spec-authored
@@ -314,6 +329,45 @@ function makePlate(rng) {
   p += '-';
   for (let i = 0; i < 3; i++) p += Math.floor(rng() * 10);
   return p;
+}
+
+// ---- car identity: type, colour, damage — deterministic from the plate,
+// so the same vehicle looks the same in traffic, in the case-file stills,
+// and in a witness's description. Night-street palette: distinct without
+// stealing any signal colour.
+var CAR_TYPES = ['COMPACT', 'SEDAN', 'SPORTS CAR', 'SUV', 'PICKUP', 'VAN'];
+var CAR_COLOR_TABLE = [
+  { name: 'RED',    hex: 0x9c4038, tone: 'DARK' },
+  { name: 'BLUE',   hex: 0x3d5a80, tone: 'DARK' },
+  { name: 'WHITE',  hex: 0xc9cdd6, tone: 'LIGHT' },
+  { name: 'BLACK',  hex: 0x23252c, tone: 'DARK' },
+  { name: 'SILVER', hex: 0x9aa0ab, tone: 'LIGHT' },
+  { name: 'GREEN',  hex: 0x52704f, tone: 'DARK' },
+  { name: 'TAN',    hex: 0xa89078, tone: 'LIGHT' },
+  { name: 'BROWN',  hex: 0x6b4f42, tone: 'DARK' },
+  { name: 'YELLOW', hex: 0xb09a3f, tone: 'LIGHT' },
+  { name: 'GREY',   hex: 0x6f7681, tone: 'DARK' }
+];
+
+function carIdentity(plate) {
+  const h1 = hashStr(plate + '/t'), h2 = hashStr(plate + '/c'), h3 = hashStr(plate + '/d');
+  const damage = [];
+  if (h3 % 100 < 16) damage.push('CRACKED WINDSHIELD');
+  if ((h3 >>> 3) % 100 < 13) damage.push('DENTED PANEL');
+  if ((h3 >>> 7) % 100 < 10) damage.push('BROKEN TAILLIGHT');
+  return {
+    type: CAR_TYPES[h1 % CAR_TYPES.length],
+    color: CAR_COLOR_TABLE[h2 % CAR_COLOR_TABLE.length],
+    damage
+  };
+}
+
+// What a witness actually says: usually the colour and type, sometimes
+// just "a dark car" — vague enough that the stills still matter.
+function witnessDescription(identity, r1, r2) {
+  const color = r1 < 0.7 ? identity.color.name : (identity.color.tone === 'DARK' ? 'DARK' : 'LIGHT-COLORED');
+  const type = r2 < 0.75 ? identity.type : 'CAR';
+  return color + ' ' + type;
 }
 
 // Threshold band label for a value, from CONFIG bands [[min,label],...].
@@ -488,6 +542,31 @@ var MapGen = (() => {
       if (d < best) { best = d; center = n.id; }
     }
     map.center = center;
+
+    // Recognisable parts of town: districts ring outward from downtown,
+    // and three points of interest anchor the major crimes. All labels
+    // are descriptive, never brands.
+    const fromCenter = bfsMulti(map, [center]);
+    const poiCandidates = nodes.filter(n => !n.exit && adj[n.id].length >= 2 &&
+      map.distToExit[n.id] >= M.MIN_ESCAPE_SEGMENTS && n.id !== center)
+      .sort((a, b) => fromCenter[a.id] - fromCenter[b.id]);
+    if (poiCandidates.length < 3) return null;
+    map.poi = {
+      BANK: poiCandidates[0].id,
+      OFFICE: poiCandidates[Math.min(1, poiCandidates.length - 1)].id,
+      GROCERY: poiCandidates[Math.min(2 + Math.floor(rng() * 3), poiCandidates.length - 1)].id
+    };
+    map.districts = nodes.map(n => {
+      if (n.id === map.poi.BANK) return 'BANK';
+      if (n.id === map.poi.OFFICE) return 'OFFICE';
+      if (n.id === map.poi.GROCERY) return 'GROCERY';
+      if (n.syndicate) return 'SYNDICATE';
+      const d = fromCenter[n.id];
+      if (d === Infinity) return 'HOUSES';
+      if (d <= 2) return 'DOWNTOWN';
+      if (d <= 5) return 'APARTMENTS';
+      return 'HOUSES';
+    });
 
     return map;
   }
@@ -778,8 +857,17 @@ var State = (() => {
   }
 
   function addCrew(state, id, kind) {
+    // each crew runs its own tuning, sampled deterministically (player-
+    // directed individuality): traits a log line could name, not a policy
+    const M = CONFIG.CrewMemory;
+    const draw = (band) => band[0] + rngNext(state, 'crewtraits') * (band[1] - band[0]);
+    const traits = {
+      learn: draw(M.TRAIT_LEARN) + (kind === 'SYNDICATE' ? M.SYNDICATE_PRO : 0),
+      avoid: draw(M.TRAIT_AVOID),
+      bold: draw(M.TRAIT_BOLD)
+    };
     state.crews[id] = {
-      id, kind,
+      id, kind, traits,
       known: {},            // camId -> time last sighted
       activeKnown: [],      // snapshot used for routing (rate-limited, §13.3)
       lastRelearn: -Infinity,
@@ -818,7 +906,9 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { State, A
 
 var Sightlines = (() => {
 
-  const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // E, S, W, N (dir index for the Long)
+  const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // E, S, W, N
+  const QUADRANT_NAMES = ['SE', 'SW', 'NW', 'NE'];  // POST aim labels (ray pairs E+S, S+W, W+N, N+E)
+  const DIR_NAMES = ['EAST', 'SOUTH', 'WEST', 'NORTH'];
 
   function segBetween(map, a, b) {
     for (const e of map.adj[a]) if (e.node === b) return e.seg;
@@ -826,11 +916,14 @@ var Sightlines = (() => {
   }
 
   // Sightline entries: { seg, dist, oblique } — dist is 1-indexed segments
-  // from the pole, oblique marks cross-traffic seen at an angle.
-  // POST: rays in 4 directions, range 2, plus oblique crossings at ray nodes.
+  // from the pole, oblique marks cross-traffic seen at an angle. Vision
+  // travels along street corridors only: buildings occlude everything
+  // else, and a ray stops where the road does.
+  // POST: aimed QUADRANT — two adjacent rays (E+S, S+W, W+N, N+E), range
+  //       2, plus oblique crossings at ray nodes. Aimed at placement,
+  //       forever — fixed-sector doctrine.
   // LONG: one aimed ray, range 5, no obliques — a narrow corridor.
-  // DOME: all incident segments head-on at dist 1, plus obliques at the
-  //       neighbouring nodes — many angles, poor reads.
+  // DOME: all four rays at range 1 plus obliques — the unaimed corner unit.
   // RELAY: sees nothing.
   function compute(map, nodeIdx, type, dir) {
     const spec = CONFIG.Cameras[type];
@@ -838,7 +931,10 @@ var Sightlines = (() => {
     if (!spec || spec.RANGE === 0) return out;
     const seen = new Set();
     const node = map.nodes[nodeIdx];
-    const dirs = spec.DIRECTIONS === 1 ? [DIRS[dir || 0]] : DIRS;
+    const d0 = dir || 0;
+    const dirs = spec.DIRECTIONS === 1 ? [DIRS[d0]]
+      : spec.DIRECTIONS === 2 ? [DIRS[d0], DIRS[(d0 + 1) % 4]]
+      : DIRS;
 
     for (const [dx, dy] of dirs) {
       let x = node.x, y = node.y, cur = nodeIdx;
@@ -925,7 +1021,13 @@ var Sightlines = (() => {
     return excludeCamId === undefined ? l : l.filter(id => id !== excludeCamId);
   }
 
-  return { compute, baseConfidence, liveConfidence, quoteQuality, rebuildCoverage, camerasWatchingNode, DIRS };
+  function aimLabel(type, dir) {
+    const spec = CONFIG.Cameras[type];
+    if (!spec || spec.RANGE === 0 || spec.DIRECTIONS >= 4) return null;
+    return spec.DIRECTIONS === 1 ? DIR_NAMES[dir || 0] : QUADRANT_NAMES[dir || 0];
+  }
+
+  return { compute, baseConfidence, liveConfidence, quoteQuality, rebuildCoverage, camerasWatchingNode, aimLabel, DIRS, QUADRANT_NAMES, DIR_NAMES };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { Sightlines };
@@ -1186,6 +1288,11 @@ var Traffic = (() => {
       if (!cam) continue;
       const entry = cam.sight.find(e => e.seg === segId);
       if (!entry) continue;
+      // one read per camera per pass (player-directed): tracking a car
+      // takes multiple cameras, not one pole triple-dipping
+      if (!veh._lastReadBy) veh._lastReadBy = {};
+      if (state.time - (veh._lastReadBy[camId] || -Infinity) < CONFIG.Confidence.PER_VEHICLE_COOLDOWN) continue;
+      veh._lastReadBy[camId] = state.time;
       const conf = Sightlines.liveConfidence(state, cam, entry);
       const a = state.map.nodes[veh.path[veh.at - 1]], b = state.map.nodes[veh.path[veh.at]];
       const heading = a && b ? (b.x > a.x ? 0 : b.y > a.y ? 1 : b.x < a.x ? 2 : 3) : 0; // E S W N
@@ -1347,9 +1454,14 @@ var CaseSystem = (() => {
   }
 
   // Best coherent triple by confidence sum; also reports whether any
-  // contradictory pair exists in the evidence set.
-  function grade(state, evidence) {
+  // contradictory pair exists in the evidence set. A valid triple is a
+  // TRACK (player-directed): it spans distinct cameras, and its earliest
+  // read comes from near the scene — picked up where it happened,
+  // followed across the city, taken down at the last pole.
+  function grade(state, evidence, opts) {
+    opts = opts || {};
     const K = CONFIG.Cases.READS_TO_CLOSE;
+    const minCams = opts.minCams !== undefined ? opts.minCams : CONFIG.Cases.MIN_TRACK_CAMS;
     const E = evidence.slice().sort((a, b) => b.conf - a.conf).slice(0, 10);
     let contradiction = false;
     for (let i = 0; i < E.length; i++) for (let j = i + 1; j < E.length; j++) {
@@ -1365,6 +1477,9 @@ var CaseSystem = (() => {
             if (!pairCoherent(state, triple[i], triple[i + 1])) return;
           }
           if (!pairCoherent(state, triple[0], triple[triple.length - 1])) return;
+          if (new Set(triple.map(r => r.camId)).size < minCams) return;
+          if (opts.anchorNode !== undefined &&
+              nodeDist(state, camNode(state, triple[0]), opts.anchorNode) > CONFIG.Cases.ANCHOR_DIST) return;
           const sum = triple.reduce((s, r) => s + r.conf, 0);
           if (sum > bestSum) { bestSum = sum; best = triple; }
           return;
@@ -1376,16 +1491,52 @@ var CaseSystem = (() => {
     return { best, bestSum, contradiction, count: evidence.length };
   }
 
+  // grading options for a case: vandal files are one witnessed scene,
+  // everything else must be a cross-town track anchored at the crime
+  function gradeOpts(kase) {
+    return kase.type === 'VANDAL' ? { minCams: 1 } : { anchorNode: kase.spawnNode };
+  }
+
   // ---- crimes ----
+
+  // Specific crimes at recognisable places (player-directed): the kind
+  // and the landmark come from where it happened, and the tip line says
+  // what the witness actually saw.
+  const PETTY_KINDS = {
+    HOUSES: ['BREAK-IN', 'THE ROW HOUSES'],
+    APARTMENTS: ['MUGGING', 'THE APARTMENTS'],
+    DOWNTOWN: ['CAR THEFT', 'DOWNTOWN'],
+    SYNDICATE: ['SHAKEDOWN', 'THE SYNDICATE BLOCK'],
+    BANK: ['PURSE SNATCHING', 'THE BANK STEPS'],
+    OFFICE: ['SMASH-AND-GRAB', 'THE OFFICE TOWER'],
+    GROCERY: ['SHOPLIFTING', 'THE GROCERY STORE']
+  };
+  const TIP_VERBS = {
+    'BANK ROBBERY': 'rob', 'OFFICE BURGLARY': 'hit', 'ARMED ROBBERY': 'hold up',
+    'SHOPLIFTING': 'run from', 'MUGGING': 'flee', 'BREAK-IN': 'leave',
+    'CAR THEFT': 'boost a car near', 'SHAKEDOWN': 'work', 'PURSE SNATCHING': 'strike at',
+    'SMASH-AND-GRAB': 'hit', 'SYNDICATE HEIST': 'clean out'
+  };
 
   function openCrime(state, type) {
     const rng = () => State.rngNext(state, 'crimes');
-    let spawnNode;
+    let spawnNode, kind, landmark;
     if (type === 'SYNDICATE') {
       spawnNode = state.map.syndicate;
+      kind = 'SYNDICATE HEIST'; landmark = 'THE SYNDICATE BLOCK';
+    } else if (type === 'MAJOR') {
+      const r = rng();
+      const pick = r < 0.4 ? ['BANK', 'BANK ROBBERY', 'THE BANK']
+        : r < 0.7 ? ['OFFICE', 'OFFICE BURGLARY', 'THE OFFICE TOWER']
+        : ['GROCERY', 'ARMED ROBBERY', 'THE GROCERY STORE'];
+      spawnNode = state.map.poi[pick[0]];
+      kind = pick[1]; landmark = pick[2];
     } else {
       const zones = state.map.spawnZones;
       spawnNode = zones[Math.floor(rng() * zones.length)];
+      const district = state.map.districts[spawnNode] || 'HOUSES';
+      const k = PETTY_KINDS[district] || ['THEFT', 'THE ' + district];
+      kind = k[0]; landmark = k[1];
     }
     const crewId = type === 'SYNDICATE' ? 'syndicate'
       : type === 'MAJOR' ? 'major-a'
@@ -1405,12 +1556,16 @@ var CaseSystem = (() => {
       if (type === 'SYNDICATE' && !crew.plate) crew.plate = makePlate(() => State.rngNext(state, 'plates'));
       kase = {
         id: state.nextCaseId++, type, plate: crew.plate, crewId,
+        kind, landmark,
         spawnNode, openedAt: state.time,
         coldAt: state.time + CONFIG.Cases.LIFETIME_SECONDS,
         status: 'OPEN', riskAnnounced: false, atRiskUntil: 0,
         closedTriple: null, falseCharge: false, contested: null,
         _peakUsable: 0
       };
+      // the witness saw the actual car — usually well, sometimes vaguely
+      kase.witnessDesc = witnessDescription(carIdentity(kase.plate),
+        State.rngNext(state, 'witness'), State.rngNext(state, 'witness'));
       state.cases.push(kase);
     }
 
@@ -1420,12 +1575,14 @@ var CaseSystem = (() => {
     const exit = exits[weightedIndex(weights, rng())];
     const veh = Traffic.spawnVehicle(state, 'SUSPECT', spawnNode, exit, crewId, kase.id, kase.plate);
 
-    State.emit(state, { type: 'crime', crimeType: type, node: spawnNode, caseId: kase.id });
-    // every reported crime rings the tip line (player-directed); high
-    // trust gets the tip EARLY, at the telegraph, before the car moves
+    State.emit(state, { type: 'crime', crimeType: type, node: spawnNode, caseId: kase.id, kind });
+    // every reported crime rings the tip line (player-directed) with what
+    // the witness actually saw; high trust gets zones flagged EARLY at the
+    // telegraph, before the car moves
     state.stats.tips++;
     State.emit(state, { type: 'tip', node: spawnNode, caseId: kase.id, early: false });
-    State.log(state, 'Tip line: ' + type.toLowerCase() + ' reported near intersection ' + spawnNode + '.', 'first-tip');
+    const verb = TIP_VERBS[kind] || 'flee';
+    State.log(state, 'Tip line: saw a ' + kase.witnessDesc + ' ' + verb + ' ' + landmark + '!', null);
     return kase;
   }
 
@@ -1439,6 +1596,7 @@ var CaseSystem = (() => {
         read.caseId = kase.id;
         read.trueMatch = true;
         read.plate = kase.plate;
+        kase._leads = (kase._leads || 0) + 1;
       }
       return;
     }
@@ -1465,6 +1623,7 @@ var CaseSystem = (() => {
       read.caseId = best.id;
       read.trueMatch = false;
       read.plate = best.plate;        // the misread "looks like" the suspect plate
+      best._leads = (best._leads || 0) + 1;
       state.stats.falseAttached++;
     }
   }
@@ -1494,8 +1653,15 @@ var CaseSystem = (() => {
     kase.falseCharge = falseCount >= CONFIG.Cases.FALSE_MAJORITY;
     state.clrClosed += 1;                  // the arrest is what clearance counts
     state.stats.closures++;
-    State.emit(state, { type: 'arrest', caseId: kase.id, via: kase.via });
-    State.log(state, 'Corroborated. Arrest made — ' + kase.plate + '.', 'first-arrest');
+    // the last read in the track is where they're taken down
+    const last = (triple || []).slice().sort((a, b) => a.t - b.t).pop();
+    kase.arrestNode = last ? camNode(state, last) : kase.spawnNode;
+    const where = state.map.districts ? state.map.districts[kase.arrestNode] : null;
+    const PHRASE = { DOWNTOWN: 'downtown', APARTMENTS: 'by the apartments', HOUSES: 'in the row houses',
+      BANK: 'outside the bank', OFFICE: 'by the office tower', GROCERY: 'at the grocery store',
+      SYNDICATE: 'on the syndicate block' };
+    State.emit(state, { type: 'arrest', caseId: kase.id, via: kase.via, node: kase.arrestNode });
+    State.log(state, 'Tracked and taken down ' + (PHRASE[where] || 'mid-route') + ' — ' + kase.plate + '.', null);
 
     // an arrest takes the vandal crew off the board immediately
     if (kase.type === 'VANDAL') {
@@ -1552,7 +1718,18 @@ var CaseSystem = (() => {
     }
   }
 
+  // Clearance judges the cases you ENGAGED (player-directed rebalance for
+  // the tracking era): a file with zero qualifying reads lapses quietly —
+  // the city is bigger than the network, and that is not the analyst's
+  // failure. Losing a lead you HAD still costs.
   function goCold(state, kase, reason) {
+    const engaged = (kase._leads || 0) >= CONFIG.Cases.ENGAGED_AT || kase.status === 'CONTESTED';
+    if (!engaged) {
+      kase.status = 'LAPSED';
+      state.stats.lapsed = (state.stats.lapsed || 0) + 1;
+      State.emit(state, { type: 'caseCold', caseId: kase.id, reason: 'no-leads' });
+      return;
+    }
     kase.status = 'COLD';
     state.clrCold += 1;
     state.stats.colds++;
@@ -1566,7 +1743,7 @@ var CaseSystem = (() => {
     if (!kase) return { ok: false, reason: 'NO SUCH CASE' };
     if (kase.status !== 'CONTESTED') return { ok: false, reason: 'NOT CONTESTED' };
     const ev = usableEvidence(state, kase);
-    const g = grade(state, ev);
+    const g = grade(state, ev, gradeOpts(kase));
     const graded = g.best || ev.slice().sort((a, b) => b.conf - a.conf).slice(0, CONFIG.Cases.READS_TO_CLOSE);
     const majorityTrue = graded.filter(r => r.trueMatch).length > graded.length / 2;
     state.stats.contestedResolved++;
@@ -1600,6 +1777,22 @@ var CaseSystem = (() => {
     for (const kase of state.cases) {
       if (kase.status === 'ARREST' && state.time >= kase.convictAt) resolveConviction(state, kase);
       if (kase.status !== 'OPEN' && kase.status !== 'CONTESTED') continue;
+
+      // the suspect drives again mid-lifetime (player-directed tracking):
+      // one crime is one pass; the second sighting is what lets two
+      // cameras build a cross-town track. Syndicate re-runs via its
+      // repeat jobs; vandal scenes don't drive.
+      if (kase.type !== 'VANDAL' && kase.type !== 'SYNDICATE' && !kase._secondRun &&
+          state.time >= kase.openedAt + CONFIG.Cases.LIFETIME_SECONDS * CONFIG.Cases.SECOND_RUN_AT) {
+        kase._secondRun = true;
+        const exits = state.map.exits;
+        const exit = exits[Math.floor(State.rngNext(state, 'crimes') * exits.length)];
+        const veh = Traffic.spawnVehicle(state, 'SUSPECT', kase.spawnNode, exit, kase.crewId, kase.id, kase.plate);
+        if (veh) {
+          State.emit(state, { type: 'tip', node: kase.spawnNode, caseId: kase.id, early: false });
+          State.log(state, 'Seen again near ' + (kase.landmark || 'the scene') + ' — ' + (kase.witnessDesc || kase.plate) + '.', null);
+        }
+      }
       const ev = usableEvidence(state, kase);
 
       // §14.4: evidence loss makes the wall visible
@@ -1621,7 +1814,7 @@ var CaseSystem = (() => {
         }
       }
 
-      const g = grade(state, ev);
+      const g = grade(state, ev, gradeOpts(kase));
       const S = CONFIG.Cases.CLOSURE_CONFIDENCE_SUM;
 
       if (kase.status === 'OPEN') {
@@ -1665,7 +1858,7 @@ var CaseSystem = (() => {
     }
   }
 
-  return { byId, openCrime, attachRead, tick, close, goCold, usableEvidence, grade, nodeDist, pairCoherent, contradictionPairs };
+  return { byId, openCrime, attachRead, tick, close, goCold, usableEvidence, grade, gradeOpts, nodeDist, pairCoherent, contradictionPairs };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { CaseSystem };
@@ -1725,10 +1918,13 @@ var VandalSystem = (() => {
     return Traffic.route(state, from, to, null);
   }
 
-  function spawn(state, type, crewId, forcedTargetCamId) {
-    const edges = edgeRoadNodes(state);
-    if (!edges.length) return null;
-    const from = edges[Math.floor(State.rngNext(state, 'vandals') * edges.length)].id;
+  function spawn(state, type, crewId, forcedTargetCamId, spawnNode) {
+    let from = spawnNode;
+    if (from === undefined) {
+      const edges = edgeRoadNodes(state);
+      if (!edges.length) return null;
+      from = edges[Math.floor(State.rngNext(state, 'vandals') * edges.length)].id;
+    }
     const vandal = {
       id: state.nextVandalId++, type, crewId,
       spawnNode: from, path: null, at: 0, segT: 0,
@@ -1777,6 +1973,8 @@ var VandalSystem = (() => {
         if (!crew.plate) crew.plate = makePlate(() => State.rngNext(state, 'plates'));
         kase = {
           id: state.nextCaseId++, type: 'VANDAL', plate: crew.plate, crewId: crew.id,
+          kind: 'VANDALISM', landmark: 'A CAMERA POLE',
+          witnessDesc: 'HOODED FIGURE',
           spawnNode: node, openedAt: state.time,
           coldAt: state.time + CONFIG.Cases.LIFETIME_SECONDS,
           status: 'OPEN', riskAnnounced: false,
@@ -1794,6 +1992,7 @@ var VandalSystem = (() => {
         trueMatch: true, conf, qualifying,
         caseId: qualifying && kase ? kase.id : null
       };
+      if (read.caseId !== null && kase) kase._leads = (kase._leads || 0) + 1;
       state.stats.reads++;
       if (qualifying) state.stats.qualifying++;
       CameraSystem.record(state, cam, read);
@@ -1940,11 +2139,12 @@ var CrewSystem = (() => {
   // of the network a crew may avoid.
   function snapshot(state, crew) {
     const M = CONFIG.CrewMemory;
-    const lm = learnMult(state);
+    const t = crew.traits || { learn: 1, avoid: 1, bold: 1 };
+    const lm = learnMult(state) * t.learn;   // tier pressure × this crew's own head
     const cooldown = M.RELEARN_COOLDOWN / Math.max(0.25, lm);
     if (state.time - crew.lastRelearn < cooldown) return;
     crew.lastRelearn = state.time;
-    const forget = M.FORGET_SECONDS * lm;
+    const forget = M.FORGET_SECONDS * lm / t.bold;   // bold crews shrug your cameras off sooner
     const entries = [];
     for (const camId in crew.known) {
       const t = crew.known[camId];
@@ -1967,7 +2167,8 @@ var CrewSystem = (() => {
       for (const e of cam.sight) avoid.add(e.seg);
     }
     if (!avoid.size) return null;
-    return (segId) => avoid.has(segId) ? CONFIG.CrewMemory.AVOID_WEIGHT : 1;
+    const w = CONFIG.CrewMemory.AVOID_WEIGHT * ((crew.traits && crew.traits.avoid) || 1);
+    return (segId) => avoid.has(segId) ? w : 1;
   }
 
   return { sighted, snapshot, routeWeightFn };
@@ -2145,33 +2346,10 @@ var ShiftSystem = (() => {
       }
     }
 
-    // §14.4 — the scripted signature sequence: the Fixer strikes the
-    // camera that has produced the most evidence for the open syndicate
-    // case (falling back to the highest-coverage camera), immediately.
-    if (sh.num === CONFIG.Vandals.FIXER.FIRST_SHIFT && state.cameras.length) {
-      const synd = state.cases.find(c => c.type === 'SYNDICATE' && (c.status === 'OPEN' || c.status === 'CONTESTED'));
-      let target = null;
-      if (synd) {
-        const contrib = {};
-        for (const r of state.reads) {
-          if (r.caseId === synd.id && !r.lost) contrib[r.camId] = (contrib[r.camId] || 0) + 1;
-        }
-        let best = -1;
-        for (const camId in contrib) {
-          const cam = CameraSystem.byId(state, Number(camId));
-          if (cam && contrib[camId] > best) { best = contrib[camId]; target = cam; }
-        }
-      }
-      if (!target) {
-        let bestCov = -1;
-        for (const c of state.cameras) if (c.sight.length > bestCov) { bestCov = c.sight.length; target = c; }
-      }
-      if (target) {
-        sh.pendingVandals = sh.pendingVandals.filter(v => v.type !== 'FIXER');
-        sh.pendingVandals.push({ t: state.time + 1.0, type: 'FIXER', crewId: 'vandals-' + sh.num, forcedTargetCamId: target.id });
-        State.emit(state, { type: 'strikeIncoming' });
-      }
-      if (!state.crews['vandals-' + sh.num]) State.addCrew(state, 'vandals-' + sh.num, 'VANDAL');
+    // (the shift-5 Fixer is scripted at the TELEGRAPH — see scriptedStrike —
+    // so only unscripted fixers ride the normal schedule)
+    if (sh.num === CONFIG.Vandals.FIXER.FIRST_SHIFT) {
+      sh.pendingVandals = sh.pendingVandals.filter(v => v.type !== 'FIXER');
     }
 
     // High trust: the tip line rings EARLY — spawn zones flagged at the
@@ -2264,6 +2442,45 @@ var ShiftSystem = (() => {
     State.emit(state, { type: 'shift', num: sh.num, overtime: sh.overtime, mood: moodLine(state) });
   }
 
+  // §14.4 — the scripted signature strike, fired at the shift-5 TELEGRAPH:
+  // the Fixer is already in position (he cased the pole before the job),
+  // two blocks from the camera carrying the syndicate case, so the pole
+  // falls while its footage is still pending — CASE AT RISK, then the
+  // recovery. Firing at the telegraph is what makes the beat reliable: a
+  // well-covered board can otherwise close the case before he arrives.
+  function scriptedStrike(state) {
+    if (!state.cameras.length) return;
+    const synd = state.cases.find(c => c.type === 'SYNDICATE' && (c.status === 'OPEN' || c.status === 'CONTESTED'));
+    let target = null;
+    if (synd) {
+      const contrib = {};
+      for (const r of state.reads) {
+        if (r.caseId === synd.id && !r.lost) contrib[r.camId] = (contrib[r.camId] || 0) + 1;
+      }
+      let best = -1;
+      for (const camId in contrib) {
+        const cam = CameraSystem.byId(state, Number(camId));
+        if (cam && contrib[camId] > best) { best = contrib[camId]; target = cam; }
+      }
+    }
+    if (!target) {
+      let bestCov = -1;
+      for (const c of state.cameras) if (c.sight.length > bestCov) { bestCov = c.sight.length; target = c; }
+    }
+    if (!target) return;
+    const crewId = 'vandals-' + CONFIG.Vandals.FIXER.FIRST_SHIFT;
+    if (!state.crews[crewId]) State.addCrew(state, crewId, 'VANDAL');
+    // pre-positioned: a road node two hops from the pole
+    const near = MapGen.bfsMulti(state.map, [target.node]);
+    let from = target.node;
+    for (const n of state.map.nodes) {
+      if (near[n.id] === 2 && state.map.adj[n.id].length) { from = n.id; break; }
+    }
+    State.emit(state, { type: 'strikeIncoming' });
+    VandalSystem.spawn(state, 'FIXER', crewId, target.id, from);
+    State.log(state, 'Someone has been casing your best pole.', null);
+  }
+
   function tick(state, dt) {
     const sh = state.shift;
     if (state.verdict) return;
@@ -2275,6 +2492,10 @@ var ShiftSystem = (() => {
       sh.telegraphed = true;
       LadderSystem.tally(state);
       State.emit(state, { type: 'telegraph', nextShift: sh.num + 1, mood: moodLine(state) });
+      if (sh.num + 1 === CONFIG.Vandals.FIXER.FIRST_SHIFT && !sh._struck) {
+        sh._struck = true;
+        scriptedStrike(state);
+      }
     }
     if (state.time >= sh.nextAt) startShift(state);
     if (state.verdict) return;
@@ -2752,27 +2973,112 @@ var Renderer = (() => {
       }
     }
 
-    // buildings fill the block cells the roads leave
-    const segSet = new Set();
-    for (const s of map.segs) segSet.add(s.a < s.b ? s.a + '_' + s.b : s.b + '_' + s.a);
+    // Buildings fill the block cells the roads leave — styled by district
+    // so parts of town are tellable apart at a glance (player-directed):
+    // downtown towers, ledged apartments, pitched-roof row houses, and
+    // signature landmarks with signs for the bank / grocery / offices.
     const bMats = [new THREE.MeshLambertMaterial({ color: V.BUILDING }),
       new THREE.MeshLambertMaterial({ color: V.BUILDING2 })];
+    const towerMat = new THREE.MeshLambertMaterial({ color: 0x161b26 });
+    const houseMat = new THREE.MeshLambertMaterial({ color: 0x1c1913 });
+    const houseRoofMat = new THREE.MeshLambertMaterial({ color: 0x241d15 });
     const roofMat = new THREE.MeshLambertMaterial({ color: V.ROOF });
+
+    const addSign = (x, y, z, text, color) => {
+      const sp = textSprite(text, color, 'rgba(8,10,14,0.9)');
+      sp.scale.set(0.72, 0.22, 1);
+      sp.position.set(x, y, z);
+      mapGroup.add(sp);
+    };
+
+    const poiCells = new Set();
+    const poiDefs = [];
+    if (map.poi) {
+      for (const kind of Object.keys(map.poi)) {
+        const n = map.nodes[map.poi[kind]];
+        const cx = clamp(n.x, 0, map.W - 2), cy = clamp(n.y, 0, map.H - 2);
+        poiCells.add(cx + '_' + cy);
+        poiDefs.push({ kind, x: cx, y: cy });
+      }
+    }
+
     for (let y = 0; y < map.H - 1; y++) for (let x = 0; x < map.W - 1; x++) {
-      if (rng() < 0.12) continue;   // vacant lot
-      const cnt = 1 + (rng() < 0.4 ? 1 : 0);
-      for (let i = 0; i < cnt; i++) {
-        const bw = 0.28 + rng() * 0.22, bd = 0.28 + rng() * 0.22;
-        const bh = 0.25 + rng() * 0.85;
-        const bx = x + 0.28 + rng() * (0.44 - bw / 2), bz = y + 0.28 + rng() * (0.44 - bd / 2);
+      if (poiCells.has(x + '_' + y)) continue;   // the landmark owns its block
+      if (rng() < 0.1) continue;                 // vacant lot
+      const district = map.districts ? map.districts[y * map.W + x] : 'HOUSES';
+      if (district === 'HOUSES' || district === 'SYNDICATE') {
+        const cnt = 2 + (rng() < 0.5 ? 1 : 0);   // small pitched-roof houses
+        for (let i = 0; i < cnt; i++) {
+          const hw = 0.16 + rng() * 0.08, hh = 0.12 + rng() * 0.08;
+          const hx = x + 0.24 + rng() * 0.5, hz = y + 0.24 + rng() * 0.5;
+          const body = new THREE.Mesh(new THREE.BoxGeometry(hw, hh, hw), houseMat);
+          body.position.set(hx, hh / 2, hz);
+          mapGroup.add(body);
+          const roof = new THREE.Mesh(new THREE.ConeGeometry(hw * 0.78, 0.09, 4), houseRoofMat);
+          roof.rotation.y = Math.PI / 4;
+          roof.position.set(hx, hh + 0.045, hz);
+          mapGroup.add(roof);
+        }
+      } else if (district === 'APARTMENTS') {
+        const bw = 0.34 + rng() * 0.18, bd = 0.3 + rng() * 0.16;
+        const bh = 0.38 + rng() * 0.3;
+        const bx = x + 0.3 + rng() * 0.35, bz = y + 0.3 + rng() * 0.35;
         const bm = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), bMats[Math.floor(rng() * 2)]);
         bm.position.set(bx, bh / 2, bz);
         mapGroup.add(bm);
-        if (rng() < 0.5) { // rooftop detail: vent or tank
-          const v = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.25, 0.08, bd * 0.25), roofMat);
-          v.position.set(bx + (rng() - 0.5) * bw * 0.4, bh + 0.04, bz + (rng() - 0.5) * bd * 0.4);
-          mapGroup.add(v);
+        for (let l = 1; l <= 2; l++) {           // balcony ledges
+          const ledge = new THREE.Mesh(new THREE.BoxGeometry(bw * 1.08, 0.012, bd * 1.08), roofMat);
+          ledge.position.set(bx, bh * l / 3, bz);
+          mapGroup.add(ledge);
         }
+      } else {                                    // DOWNTOWN / OFFICE ring: towers
+        const cnt = 1 + (rng() < 0.35 ? 1 : 0);
+        for (let i = 0; i < cnt; i++) {
+          const bw = 0.24 + rng() * 0.18, bd = 0.24 + rng() * 0.18;
+          const bh = 0.7 + rng() * 1.1;
+          const bx = x + 0.28 + rng() * (0.44 - bw / 2), bz = y + 0.28 + rng() * (0.44 - bd / 2);
+          const bm = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), towerMat);
+          bm.position.set(bx, bh / 2, bz);
+          mapGroup.add(bm);
+          if (rng() < 0.6) {
+            const v = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.25, 0.08, bd * 0.25), roofMat);
+            v.position.set(bx + (rng() - 0.5) * bw * 0.4, bh + 0.04, bz + (rng() - 0.5) * bd * 0.4);
+            mapGroup.add(v);
+          }
+        }
+      }
+    }
+
+    // signature landmarks with signs
+    for (const p of poiDefs) {
+      const bx = p.x + 0.5, bz = p.y + 0.5;
+      if (p.kind === 'BANK') {
+        const hall = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.3, 0.4),
+          new THREE.MeshLambertMaterial({ color: 0x3a3830 }));
+        hall.position.set(bx, 0.15, bz);
+        mapGroup.add(hall);
+        for (let c = -1; c <= 1; c++) {
+          const col = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.22, 6),
+            new THREE.MeshLambertMaterial({ color: 0x555142 }));
+          col.position.set(bx + c * 0.16, 0.11, bz - 0.24);
+          mapGroup.add(col);
+        }
+        addSign(bx, 0.52, bz, 'BANK', '#e8d48a');
+      } else if (p.kind === 'GROCERY') {
+        const store = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.14, 0.46),
+          new THREE.MeshLambertMaterial({ color: 0x27302b }));
+        store.position.set(bx, 0.07, bz);
+        mapGroup.add(store);
+        addSign(bx, 0.36, bz, 'GROCERY', '#9fd9a3');
+      } else if (p.kind === 'OFFICE') {
+        const tower = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.5, 0.3), towerMat);
+        tower.position.set(bx, 0.75, bz);
+        mapGroup.add(tower);
+        const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.22, 4),
+          new THREE.MeshBasicMaterial({ color: 0x8b93a5 }));
+        mast.position.set(bx, 1.6, bz);
+        mapGroup.add(mast);
+        addSign(bx, 1.78, bz, 'OFFICES', '#9ab4d9');
       }
     }
     scene.add(mapGroup);
@@ -2826,6 +3132,16 @@ var Renderer = (() => {
       const head = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.09, 0.12), headMat);
       head.position.y = 0.6;
       g.add(head);
+      // the aimed quadrant, shown forever at hull level: two ticks along
+      // the covered rays (fixed-sector doctrine)
+      const tickMat = new THREE.MeshBasicMaterial({ color: 0x8b93a5 });
+      for (const d of [cam.dir || 0, ((cam.dir || 0) + 1) % 4]) {
+        const [dx, dy] = Sightlines.DIRS[d];
+        const tick = new THREE.Mesh(new THREE.BoxGeometry(
+          dx !== 0 ? 0.11 : 0.03, 0.015, dy !== 0 ? 0.11 : 0.03), tickMat);
+        tick.position.set(dx * 0.15, 0.05, dy * 0.15);
+        g.add(tick);
+      }
     } else if (cam.type === 'LONG') {
       const head = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.09, 0.1), headMat);
       head.position.y = 0.62;
@@ -2937,25 +3253,51 @@ var Renderer = (() => {
 
   // ---------- vehicles & vandals ----------
 
-  // muted night-street car palette — variety without stealing a signal color
-  const CAR_COLORS = [0x9aa0ab, 0x7d8794, 0xa89078, 0x8a6f6a, 0x6f7f8f,
-    0x7a8a72, 0xb0a898, 0x5f6673, 0x94847f, 0x86929e, 0xa39a6f, 0x6d7a85];
+  // Vehicles are typed and coloured by their plate identity — the same
+  // car the case-file stills show and the witness described.
+  const VEH_DIMS = {
+    'COMPACT':    { l: 0.13, h: 0.055, w: 0.085, cab: [0.062, 0.034, 0.0] },
+    'SEDAN':      { l: 0.18, h: 0.048, w: 0.09,  cab: [0.082, 0.034, -0.012] },
+    'SPORTS CAR': { l: 0.17, h: 0.036, w: 0.09,  cab: [0.07, 0.026, -0.02] },
+    'SUV':        { l: 0.16, h: 0.075, w: 0.096, cab: [0.095, 0.038, 0.005] },
+    'PICKUP':     { l: 0.19, h: 0.058, w: 0.095, cab: null },
+    'VAN':        { l: 0.17, h: 0.082, w: 0.096, cab: null }
+  };
 
   function buildVehicle(veh) {
     const g = new THREE.Group();
-    const col = CAR_COLORS[hashStr(veh.plate) % CAR_COLORS.length];
-    const tint = 0.8 + (hashStr(veh.plate + 'x') % 30) / 100;
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.06, 0.09),
-      new THREE.MeshLambertMaterial({ color: new THREE.Color(col).multiplyScalar(tint) }));
-    body.position.y = 0.045;
-    g.add(body);
+    const ident = carIdentity(veh.plate);
+    const d = VEH_DIMS[ident.type] || VEH_DIMS.SEDAN;
+    const mat = new THREE.MeshLambertMaterial({ color: ident.color.hex });
+    const glassMat = new THREE.MeshLambertMaterial({ color: 0x0c0e13 });
+    if (ident.type === 'PICKUP') {
+      const cab = new THREE.Mesh(new THREE.BoxGeometry(d.l * 0.42, d.h * 1.35, d.w), mat);
+      cab.position.set(d.l * 0.2, d.h * 0.7, 0);
+      g.add(cab);
+      const bed = new THREE.Mesh(new THREE.BoxGeometry(d.l * 0.55, d.h * 0.75, d.w), mat);
+      bed.position.set(-d.l * 0.22, d.h * 0.42, 0);
+      g.add(bed);
+    } else {
+      const body = new THREE.Mesh(new THREE.BoxGeometry(d.l, d.h, d.w), mat);
+      body.position.y = d.h / 2 + 0.008;
+      g.add(body);
+      if (d.cab) {
+        const cab = new THREE.Mesh(new THREE.BoxGeometry(d.cab[0], d.cab[1], d.w * 0.82), glassMat);
+        cab.position.set(d.cab[2], d.h + d.cab[1] / 2, 0);
+        g.add(cab);
+      } else {
+        const cab = new THREE.Mesh(new THREE.BoxGeometry(d.l * 0.86, d.h * 0.5, d.w * 0.84), glassMat);
+        cab.position.set(0, d.h + d.h * 0.22, 0);
+        g.add(cab);
+      }
+    }
     const cone = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.3, 8, 1, true),
       new THREE.MeshBasicMaterial({
         color: V.HEADLIGHT, transparent: true, opacity: 0.16,
         blending: THREE.AdditiveBlending, depthWrite: false
       }));
     cone.rotation.z = Math.PI / 2;
-    cone.position.set(0.22, 0.04, 0);
+    cone.position.set(d.l * 0.5 + 0.14, 0.04, 0);
     g.add(cone);
     g.userData = { kind: 'vehicle', id: veh.id };
     return g;
@@ -3162,8 +3504,9 @@ var Renderer = (() => {
         case 'crime': crimeIcon(state, ev.node, V.RED, 6); break;
         case 'tip': if (ev.early) crimeIcon(state, ev.node, V.CYAN, 5); break;
         case 'arrest': {
-          const kase = state.cases.find(c => c.id === ev.caseId);
-          if (kase) ringFx(state, kase.spawnNode, V.TEAL, 1.6, 0.15, 0.8);
+          const node = ev.node !== undefined ? ev.node
+            : (state.cases.find(c => c.id === ev.caseId) || {}).spawnNode;
+          if (node !== undefined) ringFx(state, node, V.TEAL, 1.6, 0.15, 0.8);
           break;
         }
         case 'destroyed': dataLostFx(state, ev.node); markOverlayDirty(); break;
@@ -3436,7 +3779,7 @@ var Renderer = (() => {
       const p = nodePos(curState.map, nodeIdx);
       return worldToScreen(p.x, p.z, 0);
     },
-    carColorHex: (plate) => '#' + CAR_COLORS[hashStr(plate) % CAR_COLORS.length].toString(16).padStart(6, '0'),
+    carColorHex: (plate) => '#' + carIdentity(plate).color.hex.toString(16).padStart(6, '0'),
     pingNode: (n, color) => curState && ringFx(curState, n, color === 'red' ? V.RED : V.CYAN, 1.4, 0.15, 0.7),
     setGhost: (n, t, d, ok) => setGhost(curState, n, t, d, ok),
     clearGhost,
@@ -3791,7 +4134,7 @@ var UI = (() => {
       if (kase.status === 'CONTESTED') {
         const c = kase.contested || {};
         el.innerHTML = `
-          <div class="typ">CONTESTED</div>
+          <div class="typ">CONTESTED · ${kase.kind || kase.type}</div>
           <div class="plate">${kase.plate}</div>
           <div class="why">${ev.length} read${ev.length === 1 ? '' : 's'}${c.contradiction ? ', contradiction' : ', near the bar'}</div>
           <div class="pips">${pips}</div>
@@ -3818,7 +4161,7 @@ var UI = (() => {
           ? (kase.falseCharge ? ' · WRONG PLATE' : kase.collapsed ? ' · COLLAPSED' : ' · CONVICTED')
           : kase.status === 'COLD' ? ' · COLD' : '';
         el.innerHTML = `
-          <div class="typ">${kase.type === 'VANDAL' ? 'VANDAL CREW' : kase.type}${tail}</div>
+          <div class="typ">${kase.kind || (kase.type === 'VANDAL' ? 'VANDALISM' : kase.type)}${tail}</div>
           <div class="plate">${kase.plate}</div>
           <div class="pips">${pips}</div>
           <div class="timer"><i style="width:${frac * 100}%"></i></div>`;
@@ -3874,22 +4217,74 @@ var UI = (() => {
       g.fillStyle = '#3c414c';
       g.fillRect(cx + cw * 0.7, cy - ch * 2.2, cw * 0.05, ch * 2.6);   // the pole
     } else {
-      // motion ghost first (low quality = long smear)
+      // the car as it genuinely was: type, colour, and damage from its
+      // plate identity — the same identity the witness described
+      const ident = carIdentity(read.actualPlate);
       const smear = (1 - q) * W * 0.05;
+      const col = Renderer.carColorHex(read.actualPlate);
+      const glass = 'rgba(10,12,16,0.85)';
+      const rr = (x, y, w2, h2, r) => { g.beginPath(); g.roundRect(x, y, w2, h2, r); g.fill(); };
+
       const body = (dx, alpha) => {
         g.globalAlpha = alpha;
-        g.fillStyle = Renderer.carColorHex(read.actualPlate);
-        g.beginPath();
-        g.roundRect(cx + dx, cy - ch, cw, ch, ch * 0.35);
-        g.fill();
-        g.fillStyle = 'rgba(10,12,16,0.85)';   // glasshouse
-        g.beginPath();
-        g.roundRect(cx + dx + cw * (flip ? 0.42 : 0.18), cy - ch * 0.92, cw * 0.4, ch * 0.5, ch * 0.2);
-        g.fill();
+        g.fillStyle = col;
+        const t = ident.type;
+        if (t === 'PICKUP') {
+          rr(cx + dx + (flip ? 0 : cw * 0.45), cy - ch * 1.25, cw * 0.42, ch * 1.25, ch * 0.25); // cab
+          rr(cx + dx + (flip ? cw * 0.38 : 0), cy - ch * 0.7, cw * 0.62, ch * 0.7, ch * 0.15);   // bed
+          g.fillStyle = glass;
+          rr(cx + dx + (flip ? cw * 0.06 : cw * 0.5), cy - ch * 1.18, cw * 0.3, ch * 0.5, ch * 0.15);
+        } else if (t === 'VAN') {
+          rr(cx + dx, cy - ch * 1.35, cw, ch * 1.35, ch * 0.22);
+          g.fillStyle = glass;
+          rr(cx + dx + (flip ? cw * 0.08 : cw * 0.62), cy - ch * 1.22, cw * 0.28, ch * 0.5, ch * 0.12);
+        } else if (t === 'SUV') {
+          rr(cx + dx, cy - ch * 1.15, cw, ch * 1.15, ch * 0.3);
+          g.fillStyle = glass;
+          rr(cx + dx + cw * 0.2, cy - ch * 1.05, cw * 0.6, ch * 0.5, ch * 0.18);
+        } else if (t === 'SPORTS CAR') {
+          rr(cx + dx, cy - ch * 0.72, cw, ch * 0.72, ch * 0.3);
+          g.fillStyle = col;
+          rr(cx + dx + (flip ? cw * 0.02 : cw * 0.88), cy - ch * 0.95, cw * 0.1, ch * 0.25, 2); // spoiler
+          g.fillStyle = glass;
+          rr(cx + dx + cw * 0.3, cy - ch * 0.92, cw * 0.38, ch * 0.32, ch * 0.14);
+        } else if (t === 'COMPACT') {
+          rr(cx + dx + cw * 0.12, cy - ch, cw * 0.76, ch, ch * 0.35);
+          g.fillStyle = glass;
+          rr(cx + dx + cw * 0.28, cy - ch * 0.95, cw * 0.44, ch * 0.5, ch * 0.2);
+        } else { // SEDAN
+          rr(cx + dx, cy - ch, cw, ch, ch * 0.35);
+          g.fillStyle = glass;
+          rr(cx + dx + cw * (flip ? 0.42 : 0.18), cy - ch * 0.92, cw * 0.4, ch * 0.5, ch * 0.2);
+        }
         g.globalAlpha = 1;
       };
       if (smear > 0.5) body(flip ? smear : -smear, 0.35);
       body(0, 1);
+
+      // damage the witness might mention — hidden by murk on bad frames
+      g.globalAlpha = Math.max(0, q * 0.95);
+      if (ident.damage.includes('CRACKED WINDSHIELD')) {
+        g.strokeStyle = 'rgba(220,228,240,0.75)'; g.lineWidth = 1;
+        const wx = cx + cw * (flip ? 0.2 : 0.5), wy = cy - ch * 0.75;
+        for (let k = 0; k < 3; k++) {
+          g.beginPath(); g.moveTo(wx, wy);
+          g.lineTo(wx + (rng() - 0.5) * cw * 0.25, wy + (rng() - 0.3) * ch * 0.35);
+          g.stroke();
+        }
+      }
+      if (ident.damage.includes('DENTED PANEL')) {
+        g.fillStyle = 'rgba(8,10,14,0.55)';
+        g.beginPath();
+        g.ellipse(cx + cw * (0.3 + rng() * 0.4), cy - ch * 0.35, cw * 0.09, ch * 0.22, 0.4, 0, 7);
+        g.fill();
+      }
+      if (ident.damage.includes('BROKEN TAILLIGHT')) {
+        g.fillStyle = 'rgba(90,20,20,0.9)';
+        g.fillRect(cx + (flip ? cw - 4 : 0), cy - ch * 0.5, 4, ch * 0.2);
+      }
+      g.globalAlpha = 1;
+
       // wheels
       g.fillStyle = '#0a0c10';
       g.beginPath(); g.arc(cx + cw * 0.22, cy + 1, ch * 0.28, 0, 7); g.fill();
@@ -3989,8 +4384,9 @@ var UI = (() => {
     sheet.setAttribute('data-key', 'evsheet');
     const c = kase.contested || {};
     sheet.innerHTML = `<div class="evhead"><b>CASE FILE — ${kase.plate}</b>
-      <span>${kase.type} · ${ev.length} read${ev.length === 1 ? '' : 's'} · ${c.contradiction ? 'contradiction' : 'near the bar'} · cold in ${Math.max(0, Math.ceil(kase.coldAt - state.time))}s</span>
-      <button data-key="ev-close">✕</button></div>`;
+      <span>${kase.kind || kase.type} at ${kase.landmark || 'the scene'} · ${ev.length} read${ev.length === 1 ? '' : 's'} · ${c.contradiction ? 'contradiction' : 'near the bar'} · cold in ${Math.max(0, Math.ceil(kase.coldAt - state.time))}s</span>
+      <button data-key="ev-close">✕</button></div>
+      ${kase.witnessDesc ? `<div class="evhint" style="margin:0 0 8px"><span style="color:#ffc84a;font-weight:700">WITNESS: "a ${kase.witnessDesc}"</span> — does every frame match?</div>` : ''}`;
 
     // reference frame, big
     const ref = ev.find(r => r.id === refId);
@@ -4050,6 +4446,21 @@ var UI = (() => {
 
   // ---------- identity pill: tap anything and it names itself ----------
 
+  const DISTRICT_NAMES = {
+    DOWNTOWN: 'DOWNTOWN', APARTMENTS: 'THE APARTMENTS', HOUSES: 'THE ROW HOUSES',
+    SYNDICATE: 'THE SYNDICATE BLOCK', BANK: 'THE BANK', OFFICE: 'THE OFFICE TOWER',
+    GROCERY: 'THE GROCERY STORE'
+  };
+  function districtName(d) { return DISTRICT_NAMES[d] || d; }
+  function poiAt(nodeIdx) {
+    if (!state.map.poi) return null;
+    if (state.map.poi.BANK === nodeIdx) return 'THE BANK';
+    if (state.map.poi.OFFICE === nodeIdx) return 'THE OFFICE TOWER';
+    if (state.map.poi.GROCERY === nodeIdx) return 'THE GROCERY STORE';
+    if (state.map.nodes[nodeIdx].syndicate) return 'THE SYNDICATE BLOCK';
+    return null;
+  }
+
   function identity(text) {
     els.identity.textContent = text;
     els.identity.style.opacity = 1;
@@ -4065,7 +4476,8 @@ var UI = (() => {
       const cond = cam.tags >= 2 ? 'LENS BADLY FOULED' : cam.tags === 1 ? 'LENS FOULED' : 'CLEAN';
       const link = CameraSystem.relayAdjacent(state, cam) ? 'RELAY-LINKED'
         : cam.drive.length + ' unsent · uploads in ' + Math.max(0, Math.ceil(CONFIG.Retention.UPLOAD_INTERVAL - (state.time - cam.lastUpload))) + 's';
-      identity('CYCLOPS ' + cam.type + ' — ' + cond + ' · ' + link + (cam.hardened ? ' · HARDENED' : ''));
+      const aim = Sightlines.aimLabel(cam.type, cam.dir);
+      identity('CYCLOPS ' + cam.type + (aim ? ' · WATCHING ' + aim : '') + ' — ' + cond + ' · ' + link + (cam.hardened ? ' · HARDENED' : ''));
     } else if (pick.kind === 'vandal') {
       const v = state.vandals.find(x => x.id === pick.id);
       if (!v) return;
@@ -4074,11 +4486,15 @@ var UI = (() => {
       identity('VEHICLE — TRAFFIC');
     } else if (pick.kind === 'segment') {
       const s = state.map.segs[pick.id];
-      identity(s.arterial ? 'ARTERIAL — FAST TRAFFIC, POOR READS' : 'STREET — SLOW TRAFFIC, CLEAN READS');
+      const dist = state.map.districts ? state.map.districts[s.a] : null;
+      identity((s.arterial ? 'ARTERIAL — FAST TRAFFIC, POOR READS' : 'STREET — SLOW TRAFFIC, CLEAN READS') +
+        (dist ? ' · ' + districtName(dist) : ''));
     } else if (pick.kind === 'node') {
       const n = state.map.nodes[pick.id];
-      if (n.exit) identity('CITY LIMITS — SUSPECTS ESCAPE HERE');
-      else identity('OPEN POLE — TAP OPTIONS BELOW');
+      if (n.exit) { identity('CITY LIMITS — SUSPECTS ESCAPE HERE'); return; }
+      const poi = poiAt(pick.id);
+      if (poi) identity(poi + ' — CRIME LANDS HERE. WATCH THE APPROACHES.');
+      else identity('OPEN POLE — ' + districtName(state.map.districts ? state.map.districts[pick.id] : 'HOUSES'));
     }
   }
 
@@ -4101,7 +4517,7 @@ var UI = (() => {
     menu.setAttribute('data-key', 'ctxmenu');
 
     const colEyes = h('div', 'ctxcol', '<div class="colhead">EYES</div>');
-    for (const [type, ex] of [['POST', '2 blocks, all ways'], ['LONG', '5 blocks, one way'], ['DOME', 'this corner, all ways']]) {
+    for (const [type, ex] of [['POST', '2 blocks, one corner'], ['LONG', '5 blocks, one way'], ['DOME', 'this corner, all ways']]) {
       const spec = CONFIG.Cameras[type];
       let refused = null;
       if (cam) refused = 'POLE OCCUPIED';
@@ -4230,7 +4646,8 @@ var UI = (() => {
     wrap.appendChild(pill);
 
     const row = h('div', 'confirmrow');
-    if (gm.type === 'LONG') {
+    const spec = CONFIG.Cameras[gm.type];
+    if (spec.RANGE > 0 && spec.DIRECTIONS < 4) {   // aimed units: POST quadrant, LONG ray
       const l = h('button', 'turnbtn', '↺'); l.setAttribute('data-key', 'turn-ccw');
       const r = h('button', 'turnbtn', '↻'); r.setAttribute('data-key', 'turn-cw');
       l.onclick = (e) => { e.stopPropagation(); gm.dir = (gm.dir + 3) % 4; showConfirm(); };
@@ -4798,25 +5215,32 @@ var Demo = (() => {
         const relayTurn = state.cameras.length >= 4 &&
           !state.cameras.some(c => c.type === 'RELAY') && state.budget >= CONFIG.Cameras.RELAY.COST;
         const buyKey = relayTurn ? 'buy-relay' : 'buy-post';
-        stage('place', [
-          { delay: 0.2, fn: () => { if (Renderer.userIdleSeconds() > 6) Renderer.centerOn(site); } },
+        const steps = [
+          { delay: 0.2, fn: () => { if (Renderer.userIdleSeconds() > 6) Renderer.centerOn(site.node); } },
           { delay: 0.5, fn: () => {
-            const s = Renderer.nodeScreen(site);
-            UI.openMenu(site, s.x, s.y);
+            const s = Renderer.nodeScreen(site.node);
+            UI.openMenu(site.node, s.x, s.y);
           } },
           { delay: D.HIGHLIGHT_S, fn: () => lit(UI.getEl(buyKey)) },
           { delay: D.PRESS_S + 0.3, fn: () => {
             const el = UI.getEl(buyKey);
             if (pressable(el)) el.click(); else { UI.closeMenu(); blacklist.set('place', wall + CONFIG.Demo.BLACKLIST_S); }
             unlight();
-          } },
-          { delay: D.CONFIRM_S + 0.35, fn: () => lit(UI.getEl('confirm')) },
-          { delay: D.CONFIRM_S, fn: () => {
-            const el = UI.getEl('confirm');
-            if (pressable(el)) el.click(); else { UI.cancelGhost(); blacklist.set('place', wall + CONFIG.Demo.BLACKLIST_S); }
-            unlight();
           } }
-        ]);
+        ];
+        // aim the quadrant with visible TURN presses (fixed-sector doctrine)
+        if (!relayTurn) {
+          for (let t = 0; t < site.dir; t++) {
+            steps.push({ delay: 0.35, fn: () => { const el = UI.getEl('turn-cw'); if (el) { lit(el); el.click(); } } });
+          }
+        }
+        steps.push({ delay: D.CONFIRM_S + 0.35, fn: () => lit(UI.getEl('confirm')) });
+        steps.push({ delay: D.CONFIRM_S, fn: () => {
+          const el = UI.getEl('confirm');
+          if (pressable(el)) el.click(); else { UI.cancelGhost(); blacklist.set('place', wall + CONFIG.Demo.BLACKLIST_S); }
+          unlight();
+        } });
+        stage('place', steps);
         return;
       }
     }
@@ -4843,13 +5267,19 @@ var Demo = (() => {
     for (const n of state.map.nodes) {
       if (n.exit || !state.map.adj[n.id].length) continue;
       if (CameraSystem.camAt(state, n.id)) continue;
+      // crimes land at the zones AND the landmarks AND the syndicate block
+      const sources = state.map.spawnZones.concat(
+        state.map.poi ? [state.map.poi.BANK, state.map.poi.OFFICE, state.map.poi.GROCERY] : [],
+        [state.map.syndicate]);
       let minSpawn = Infinity;
-      for (const z of state.map.spawnZones) minSpawn = Math.min(minSpawn, CaseSystem.nodeDist(state, n.id, z));
-      const q = Sightlines.quoteQuality(state, n.id, 'POST', 0);
-      if (!q) continue;
-      const S = CONFIG.Demo.STRATEGY;
-      const score = S.W_COVERAGE * q.count / 8 + S.W_QUALITY * q.best / 100 + S.W_SPAWN / (1 + minSpawn);
-      if (score > bestScore) { bestScore = score; best = n.id; }
+      for (const z of sources) minSpawn = Math.min(minSpawn, CaseSystem.nodeDist(state, n.id, z));
+      for (let dir = 0; dir < 4; dir++) {
+        const q = Sightlines.quoteQuality(state, n.id, 'POST', dir);
+        if (!q) continue;
+        const S = CONFIG.Demo.STRATEGY;
+        const score = S.W_COVERAGE * q.count / 8 + S.W_QUALITY * q.best / 100 + S.W_SPAWN / (1 + minSpawn);
+        if (score > bestScore) { bestScore = score; best = { node: n.id, dir }; }
+      }
     }
     return best;
   }

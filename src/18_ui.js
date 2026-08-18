@@ -338,7 +338,7 @@ var UI = (() => {
       if (kase.status === 'CONTESTED') {
         const c = kase.contested || {};
         el.innerHTML = `
-          <div class="typ">CONTESTED</div>
+          <div class="typ">CONTESTED · ${kase.kind || kase.type}</div>
           <div class="plate">${kase.plate}</div>
           <div class="why">${ev.length} read${ev.length === 1 ? '' : 's'}${c.contradiction ? ', contradiction' : ', near the bar'}</div>
           <div class="pips">${pips}</div>
@@ -365,7 +365,7 @@ var UI = (() => {
           ? (kase.falseCharge ? ' · WRONG PLATE' : kase.collapsed ? ' · COLLAPSED' : ' · CONVICTED')
           : kase.status === 'COLD' ? ' · COLD' : '';
         el.innerHTML = `
-          <div class="typ">${kase.type === 'VANDAL' ? 'VANDAL CREW' : kase.type}${tail}</div>
+          <div class="typ">${kase.kind || (kase.type === 'VANDAL' ? 'VANDALISM' : kase.type)}${tail}</div>
           <div class="plate">${kase.plate}</div>
           <div class="pips">${pips}</div>
           <div class="timer"><i style="width:${frac * 100}%"></i></div>`;
@@ -421,22 +421,74 @@ var UI = (() => {
       g.fillStyle = '#3c414c';
       g.fillRect(cx + cw * 0.7, cy - ch * 2.2, cw * 0.05, ch * 2.6);   // the pole
     } else {
-      // motion ghost first (low quality = long smear)
+      // the car as it genuinely was: type, colour, and damage from its
+      // plate identity — the same identity the witness described
+      const ident = carIdentity(read.actualPlate);
       const smear = (1 - q) * W * 0.05;
+      const col = Renderer.carColorHex(read.actualPlate);
+      const glass = 'rgba(10,12,16,0.85)';
+      const rr = (x, y, w2, h2, r) => { g.beginPath(); g.roundRect(x, y, w2, h2, r); g.fill(); };
+
       const body = (dx, alpha) => {
         g.globalAlpha = alpha;
-        g.fillStyle = Renderer.carColorHex(read.actualPlate);
-        g.beginPath();
-        g.roundRect(cx + dx, cy - ch, cw, ch, ch * 0.35);
-        g.fill();
-        g.fillStyle = 'rgba(10,12,16,0.85)';   // glasshouse
-        g.beginPath();
-        g.roundRect(cx + dx + cw * (flip ? 0.42 : 0.18), cy - ch * 0.92, cw * 0.4, ch * 0.5, ch * 0.2);
-        g.fill();
+        g.fillStyle = col;
+        const t = ident.type;
+        if (t === 'PICKUP') {
+          rr(cx + dx + (flip ? 0 : cw * 0.45), cy - ch * 1.25, cw * 0.42, ch * 1.25, ch * 0.25); // cab
+          rr(cx + dx + (flip ? cw * 0.38 : 0), cy - ch * 0.7, cw * 0.62, ch * 0.7, ch * 0.15);   // bed
+          g.fillStyle = glass;
+          rr(cx + dx + (flip ? cw * 0.06 : cw * 0.5), cy - ch * 1.18, cw * 0.3, ch * 0.5, ch * 0.15);
+        } else if (t === 'VAN') {
+          rr(cx + dx, cy - ch * 1.35, cw, ch * 1.35, ch * 0.22);
+          g.fillStyle = glass;
+          rr(cx + dx + (flip ? cw * 0.08 : cw * 0.62), cy - ch * 1.22, cw * 0.28, ch * 0.5, ch * 0.12);
+        } else if (t === 'SUV') {
+          rr(cx + dx, cy - ch * 1.15, cw, ch * 1.15, ch * 0.3);
+          g.fillStyle = glass;
+          rr(cx + dx + cw * 0.2, cy - ch * 1.05, cw * 0.6, ch * 0.5, ch * 0.18);
+        } else if (t === 'SPORTS CAR') {
+          rr(cx + dx, cy - ch * 0.72, cw, ch * 0.72, ch * 0.3);
+          g.fillStyle = col;
+          rr(cx + dx + (flip ? cw * 0.02 : cw * 0.88), cy - ch * 0.95, cw * 0.1, ch * 0.25, 2); // spoiler
+          g.fillStyle = glass;
+          rr(cx + dx + cw * 0.3, cy - ch * 0.92, cw * 0.38, ch * 0.32, ch * 0.14);
+        } else if (t === 'COMPACT') {
+          rr(cx + dx + cw * 0.12, cy - ch, cw * 0.76, ch, ch * 0.35);
+          g.fillStyle = glass;
+          rr(cx + dx + cw * 0.28, cy - ch * 0.95, cw * 0.44, ch * 0.5, ch * 0.2);
+        } else { // SEDAN
+          rr(cx + dx, cy - ch, cw, ch, ch * 0.35);
+          g.fillStyle = glass;
+          rr(cx + dx + cw * (flip ? 0.42 : 0.18), cy - ch * 0.92, cw * 0.4, ch * 0.5, ch * 0.2);
+        }
         g.globalAlpha = 1;
       };
       if (smear > 0.5) body(flip ? smear : -smear, 0.35);
       body(0, 1);
+
+      // damage the witness might mention — hidden by murk on bad frames
+      g.globalAlpha = Math.max(0, q * 0.95);
+      if (ident.damage.includes('CRACKED WINDSHIELD')) {
+        g.strokeStyle = 'rgba(220,228,240,0.75)'; g.lineWidth = 1;
+        const wx = cx + cw * (flip ? 0.2 : 0.5), wy = cy - ch * 0.75;
+        for (let k = 0; k < 3; k++) {
+          g.beginPath(); g.moveTo(wx, wy);
+          g.lineTo(wx + (rng() - 0.5) * cw * 0.25, wy + (rng() - 0.3) * ch * 0.35);
+          g.stroke();
+        }
+      }
+      if (ident.damage.includes('DENTED PANEL')) {
+        g.fillStyle = 'rgba(8,10,14,0.55)';
+        g.beginPath();
+        g.ellipse(cx + cw * (0.3 + rng() * 0.4), cy - ch * 0.35, cw * 0.09, ch * 0.22, 0.4, 0, 7);
+        g.fill();
+      }
+      if (ident.damage.includes('BROKEN TAILLIGHT')) {
+        g.fillStyle = 'rgba(90,20,20,0.9)';
+        g.fillRect(cx + (flip ? cw - 4 : 0), cy - ch * 0.5, 4, ch * 0.2);
+      }
+      g.globalAlpha = 1;
+
       // wheels
       g.fillStyle = '#0a0c10';
       g.beginPath(); g.arc(cx + cw * 0.22, cy + 1, ch * 0.28, 0, 7); g.fill();
@@ -536,8 +588,9 @@ var UI = (() => {
     sheet.setAttribute('data-key', 'evsheet');
     const c = kase.contested || {};
     sheet.innerHTML = `<div class="evhead"><b>CASE FILE — ${kase.plate}</b>
-      <span>${kase.type} · ${ev.length} read${ev.length === 1 ? '' : 's'} · ${c.contradiction ? 'contradiction' : 'near the bar'} · cold in ${Math.max(0, Math.ceil(kase.coldAt - state.time))}s</span>
-      <button data-key="ev-close">✕</button></div>`;
+      <span>${kase.kind || kase.type} at ${kase.landmark || 'the scene'} · ${ev.length} read${ev.length === 1 ? '' : 's'} · ${c.contradiction ? 'contradiction' : 'near the bar'} · cold in ${Math.max(0, Math.ceil(kase.coldAt - state.time))}s</span>
+      <button data-key="ev-close">✕</button></div>
+      ${kase.witnessDesc ? `<div class="evhint" style="margin:0 0 8px"><span style="color:#ffc84a;font-weight:700">WITNESS: "a ${kase.witnessDesc}"</span> — does every frame match?</div>` : ''}`;
 
     // reference frame, big
     const ref = ev.find(r => r.id === refId);
@@ -597,6 +650,21 @@ var UI = (() => {
 
   // ---------- identity pill: tap anything and it names itself ----------
 
+  const DISTRICT_NAMES = {
+    DOWNTOWN: 'DOWNTOWN', APARTMENTS: 'THE APARTMENTS', HOUSES: 'THE ROW HOUSES',
+    SYNDICATE: 'THE SYNDICATE BLOCK', BANK: 'THE BANK', OFFICE: 'THE OFFICE TOWER',
+    GROCERY: 'THE GROCERY STORE'
+  };
+  function districtName(d) { return DISTRICT_NAMES[d] || d; }
+  function poiAt(nodeIdx) {
+    if (!state.map.poi) return null;
+    if (state.map.poi.BANK === nodeIdx) return 'THE BANK';
+    if (state.map.poi.OFFICE === nodeIdx) return 'THE OFFICE TOWER';
+    if (state.map.poi.GROCERY === nodeIdx) return 'THE GROCERY STORE';
+    if (state.map.nodes[nodeIdx].syndicate) return 'THE SYNDICATE BLOCK';
+    return null;
+  }
+
   function identity(text) {
     els.identity.textContent = text;
     els.identity.style.opacity = 1;
@@ -612,7 +680,8 @@ var UI = (() => {
       const cond = cam.tags >= 2 ? 'LENS BADLY FOULED' : cam.tags === 1 ? 'LENS FOULED' : 'CLEAN';
       const link = CameraSystem.relayAdjacent(state, cam) ? 'RELAY-LINKED'
         : cam.drive.length + ' unsent · uploads in ' + Math.max(0, Math.ceil(CONFIG.Retention.UPLOAD_INTERVAL - (state.time - cam.lastUpload))) + 's';
-      identity('CYCLOPS ' + cam.type + ' — ' + cond + ' · ' + link + (cam.hardened ? ' · HARDENED' : ''));
+      const aim = Sightlines.aimLabel(cam.type, cam.dir);
+      identity('CYCLOPS ' + cam.type + (aim ? ' · WATCHING ' + aim : '') + ' — ' + cond + ' · ' + link + (cam.hardened ? ' · HARDENED' : ''));
     } else if (pick.kind === 'vandal') {
       const v = state.vandals.find(x => x.id === pick.id);
       if (!v) return;
@@ -621,11 +690,15 @@ var UI = (() => {
       identity('VEHICLE — TRAFFIC');
     } else if (pick.kind === 'segment') {
       const s = state.map.segs[pick.id];
-      identity(s.arterial ? 'ARTERIAL — FAST TRAFFIC, POOR READS' : 'STREET — SLOW TRAFFIC, CLEAN READS');
+      const dist = state.map.districts ? state.map.districts[s.a] : null;
+      identity((s.arterial ? 'ARTERIAL — FAST TRAFFIC, POOR READS' : 'STREET — SLOW TRAFFIC, CLEAN READS') +
+        (dist ? ' · ' + districtName(dist) : ''));
     } else if (pick.kind === 'node') {
       const n = state.map.nodes[pick.id];
-      if (n.exit) identity('CITY LIMITS — SUSPECTS ESCAPE HERE');
-      else identity('OPEN POLE — TAP OPTIONS BELOW');
+      if (n.exit) { identity('CITY LIMITS — SUSPECTS ESCAPE HERE'); return; }
+      const poi = poiAt(pick.id);
+      if (poi) identity(poi + ' — CRIME LANDS HERE. WATCH THE APPROACHES.');
+      else identity('OPEN POLE — ' + districtName(state.map.districts ? state.map.districts[pick.id] : 'HOUSES'));
     }
   }
 
@@ -648,7 +721,7 @@ var UI = (() => {
     menu.setAttribute('data-key', 'ctxmenu');
 
     const colEyes = h('div', 'ctxcol', '<div class="colhead">EYES</div>');
-    for (const [type, ex] of [['POST', '2 blocks, all ways'], ['LONG', '5 blocks, one way'], ['DOME', 'this corner, all ways']]) {
+    for (const [type, ex] of [['POST', '2 blocks, one corner'], ['LONG', '5 blocks, one way'], ['DOME', 'this corner, all ways']]) {
       const spec = CONFIG.Cameras[type];
       let refused = null;
       if (cam) refused = 'POLE OCCUPIED';
@@ -777,7 +850,8 @@ var UI = (() => {
     wrap.appendChild(pill);
 
     const row = h('div', 'confirmrow');
-    if (gm.type === 'LONG') {
+    const spec = CONFIG.Cameras[gm.type];
+    if (spec.RANGE > 0 && spec.DIRECTIONS < 4) {   // aimed units: POST quadrant, LONG ray
       const l = h('button', 'turnbtn', '↺'); l.setAttribute('data-key', 'turn-ccw');
       const r = h('button', 'turnbtn', '↻'); r.setAttribute('data-key', 'turn-cw');
       l.onclick = (e) => { e.stopPropagation(); gm.dir = (gm.dir + 3) % 4; showConfirm(); };

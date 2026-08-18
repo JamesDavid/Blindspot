@@ -26,11 +26,12 @@ var CrewSystem = (() => {
   // of the network a crew may avoid.
   function snapshot(state, crew) {
     const M = CONFIG.CrewMemory;
-    const lm = learnMult(state);
+    const t = crew.traits || { learn: 1, avoid: 1, bold: 1 };
+    const lm = learnMult(state) * t.learn;   // tier pressure × this crew's own head
     const cooldown = M.RELEARN_COOLDOWN / Math.max(0.25, lm);
     if (state.time - crew.lastRelearn < cooldown) return;
     crew.lastRelearn = state.time;
-    const forget = M.FORGET_SECONDS * lm;
+    const forget = M.FORGET_SECONDS * lm / t.bold;   // bold crews shrug your cameras off sooner
     const entries = [];
     for (const camId in crew.known) {
       const t = crew.known[camId];
@@ -53,7 +54,8 @@ var CrewSystem = (() => {
       for (const e of cam.sight) avoid.add(e.seg);
     }
     if (!avoid.size) return null;
-    return (segId) => avoid.has(segId) ? CONFIG.CrewMemory.AVOID_WEIGHT : 1;
+    const w = CONFIG.CrewMemory.AVOID_WEIGHT * ((crew.traits && crew.traits.avoid) || 1);
+    return (segId) => avoid.has(segId) ? w : 1;
   }
 
   return { sighted, snapshot, routeWeightFn };

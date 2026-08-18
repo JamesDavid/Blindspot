@@ -10,7 +10,7 @@ const { DEFAULT_GENOME } = require('./opt_lib');
 // gene → [min, max, integer?]
 const RANGES = {
   wSpawnDist: [0, 2], wExitDist: [0, 2], wCoverage: [0, 2],
-  wQuality: [0, 2], wWatch: [0, 2],
+  wQuality: [0, 2], wWatch: [0, 2], wPair: [0, 2.5],
   thrBase: [40, 75], thrRainDrop: [0, 25], thrExpiryDrop: [0, 20],
   adjBias: [0.5, 1.05],
   storagePerCam: [0, 0.8], relocIdle: [15, 60], buildPace: [0.8, 3],

@@ -31,12 +31,13 @@ for (const seed of ['sig-a', 'sig-b', 'sig-c']) {
     if (evs.length) seq = evs[evs.length - 1].seq;
     for (const ev of evs) {
       if (ev.type === 'strikeIncoming') seen.strikeIncoming = true;
-      if (ev.type === 'vandalSpawn' && ev.vandalType === 'FIXER' && st.shift.num === 5) {
+      // the scripted Fixer spawns at the shift-5 TELEGRAPH (shift 4's end)
+      if (ev.type === 'vandalSpawn' && ev.vandalType === 'FIXER' && seen.strikeIncoming && seen.fixerSpawn === null) {
         const v = st.vandals.find(x => x.id === ev.vandalId);
         seen.fixerSpawn = ev.vandalId;
         if (v && v.targetCamId) seen.fixerForced = true;
       }
-      if (ev.type === 'destroyed' && st.shift.num === 5 && seen.fixerSpawn !== null) seen.targetDestroyed = true;
+      if (ev.type === 'destroyed' && seen.fixerSpawn !== null && st.shift.num <= 5) seen.targetDestroyed = true;
       if (ev.type === 'caseAtRisk') seen.caseAtRisk = true;
       if (ev.type === 'caseClosed' && seen.targetDestroyed) {
         const kase = st.cases.find(c => c.id === ev.caseId);
@@ -54,7 +55,7 @@ for (const seed of ['sig-a', 'sig-b', 'sig-c']) {
   check(`[${seed}] match reached shift 5`, seen.shift5At >= 0, 'ended at shift ' + state.shift.num);
   check(`[${seed}] a syndicate case existed by shift 5`, seen.syndCaseIds.size > 0);
   check(`[${seed}] the strike was scripted (strikeIncoming fired)`, seen.strikeIncoming);
-  check(`[${seed}] a Fixer spawned at shift 5 with a forced target`, seen.fixerSpawn !== null && seen.fixerForced);
+  check(`[${seed}] a pre-positioned Fixer spawned with a forced target`, seen.fixerSpawn !== null && seen.fixerForced);
   check(`[${seed}] the Fixer destroyed its target`, seen.targetDestroyed);
   check(`[${seed}] the syndicate case closed after the strike (recovery)`, seen.syndClosedAfterStrike);
   check(`[${seed}] warrant progress survived`, seen.warrantAfter > 0, seen.warrantAfter);

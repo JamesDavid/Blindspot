@@ -156,6 +156,31 @@ var MapGen = (() => {
     }
     map.center = center;
 
+    // Recognisable parts of town: districts ring outward from downtown,
+    // and three points of interest anchor the major crimes. All labels
+    // are descriptive, never brands.
+    const fromCenter = bfsMulti(map, [center]);
+    const poiCandidates = nodes.filter(n => !n.exit && adj[n.id].length >= 2 &&
+      map.distToExit[n.id] >= M.MIN_ESCAPE_SEGMENTS && n.id !== center)
+      .sort((a, b) => fromCenter[a.id] - fromCenter[b.id]);
+    if (poiCandidates.length < 3) return null;
+    map.poi = {
+      BANK: poiCandidates[0].id,
+      OFFICE: poiCandidates[Math.min(1, poiCandidates.length - 1)].id,
+      GROCERY: poiCandidates[Math.min(2 + Math.floor(rng() * 3), poiCandidates.length - 1)].id
+    };
+    map.districts = nodes.map(n => {
+      if (n.id === map.poi.BANK) return 'BANK';
+      if (n.id === map.poi.OFFICE) return 'OFFICE';
+      if (n.id === map.poi.GROCERY) return 'GROCERY';
+      if (n.syndicate) return 'SYNDICATE';
+      const d = fromCenter[n.id];
+      if (d === Infinity) return 'HOUSES';
+      if (d <= 2) return 'DOWNTOWN';
+      if (d <= 5) return 'APARTMENTS';
+      return 'HOUSES';
+    });
+
     return map;
   }
 

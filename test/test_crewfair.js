@@ -2,7 +2,7 @@
 // cameras that have actually produced a read on that crew. The AI never
 // reads the player's placements directly. Run on every build.
 'use strict';
-const { makeSandbox } = require('./harness');
+const { makeSandbox, aimedPlace } = require('./harness');
 const sb = makeSandbox();
 const { State, Sim, Actions } = sb;
 
@@ -15,7 +15,7 @@ function check(name, ok, detail) {
 function controller(state) {
   if (state.cameras.length < 6 && state.budget >= 40) {
     for (const n of [state.map.center, ...state.map.spawnZones]) {
-      if (Actions.place(state, n, 'POST').ok) break;
+      if (aimedPlace(sb, state, n).ok) break;
     }
   }
   for (const kase of state.cases) {

@@ -145,27 +145,112 @@ var Renderer = (() => {
       }
     }
 
-    // buildings fill the block cells the roads leave
-    const segSet = new Set();
-    for (const s of map.segs) segSet.add(s.a < s.b ? s.a + '_' + s.b : s.b + '_' + s.a);
+    // Buildings fill the block cells the roads leave — styled by district
+    // so parts of town are tellable apart at a glance (player-directed):
+    // downtown towers, ledged apartments, pitched-roof row houses, and
+    // signature landmarks with signs for the bank / grocery / offices.
     const bMats = [new THREE.MeshLambertMaterial({ color: V.BUILDING }),
       new THREE.MeshLambertMaterial({ color: V.BUILDING2 })];
+    const towerMat = new THREE.MeshLambertMaterial({ color: 0x161b26 });
+    const houseMat = new THREE.MeshLambertMaterial({ color: 0x1c1913 });
+    const houseRoofMat = new THREE.MeshLambertMaterial({ color: 0x241d15 });
     const roofMat = new THREE.MeshLambertMaterial({ color: V.ROOF });
+
+    const addSign = (x, y, z, text, color) => {
+      const sp = textSprite(text, color, 'rgba(8,10,14,0.9)');
+      sp.scale.set(0.72, 0.22, 1);
+      sp.position.set(x, y, z);
+      mapGroup.add(sp);
+    };
+
+    const poiCells = new Set();
+    const poiDefs = [];
+    if (map.poi) {
+      for (const kind of Object.keys(map.poi)) {
+        const n = map.nodes[map.poi[kind]];
+        const cx = clamp(n.x, 0, map.W - 2), cy = clamp(n.y, 0, map.H - 2);
+        poiCells.add(cx + '_' + cy);
+        poiDefs.push({ kind, x: cx, y: cy });
+      }
+    }
+
     for (let y = 0; y < map.H - 1; y++) for (let x = 0; x < map.W - 1; x++) {
-      if (rng() < 0.12) continue;   // vacant lot
-      const cnt = 1 + (rng() < 0.4 ? 1 : 0);
-      for (let i = 0; i < cnt; i++) {
-        const bw = 0.28 + rng() * 0.22, bd = 0.28 + rng() * 0.22;
-        const bh = 0.25 + rng() * 0.85;
-        const bx = x + 0.28 + rng() * (0.44 - bw / 2), bz = y + 0.28 + rng() * (0.44 - bd / 2);
+      if (poiCells.has(x + '_' + y)) continue;   // the landmark owns its block
+      if (rng() < 0.1) continue;                 // vacant lot
+      const district = map.districts ? map.districts[y * map.W + x] : 'HOUSES';
+      if (district === 'HOUSES' || district === 'SYNDICATE') {
+        const cnt = 2 + (rng() < 0.5 ? 1 : 0);   // small pitched-roof houses
+        for (let i = 0; i < cnt; i++) {
+          const hw = 0.16 + rng() * 0.08, hh = 0.12 + rng() * 0.08;
+          const hx = x + 0.24 + rng() * 0.5, hz = y + 0.24 + rng() * 0.5;
+          const body = new THREE.Mesh(new THREE.BoxGeometry(hw, hh, hw), houseMat);
+          body.position.set(hx, hh / 2, hz);
+          mapGroup.add(body);
+          const roof = new THREE.Mesh(new THREE.ConeGeometry(hw * 0.78, 0.09, 4), houseRoofMat);
+          roof.rotation.y = Math.PI / 4;
+          roof.position.set(hx, hh + 0.045, hz);
+          mapGroup.add(roof);
+        }
+      } else if (district === 'APARTMENTS') {
+        const bw = 0.34 + rng() * 0.18, bd = 0.3 + rng() * 0.16;
+        const bh = 0.38 + rng() * 0.3;
+        const bx = x + 0.3 + rng() * 0.35, bz = y + 0.3 + rng() * 0.35;
         const bm = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), bMats[Math.floor(rng() * 2)]);
         bm.position.set(bx, bh / 2, bz);
         mapGroup.add(bm);
-        if (rng() < 0.5) { // rooftop detail: vent or tank
-          const v = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.25, 0.08, bd * 0.25), roofMat);
-          v.position.set(bx + (rng() - 0.5) * bw * 0.4, bh + 0.04, bz + (rng() - 0.5) * bd * 0.4);
-          mapGroup.add(v);
+        for (let l = 1; l <= 2; l++) {           // balcony ledges
+          const ledge = new THREE.Mesh(new THREE.BoxGeometry(bw * 1.08, 0.012, bd * 1.08), roofMat);
+          ledge.position.set(bx, bh * l / 3, bz);
+          mapGroup.add(ledge);
         }
+      } else {                                    // DOWNTOWN / OFFICE ring: towers
+        const cnt = 1 + (rng() < 0.35 ? 1 : 0);
+        for (let i = 0; i < cnt; i++) {
+          const bw = 0.24 + rng() * 0.18, bd = 0.24 + rng() * 0.18;
+          const bh = 0.7 + rng() * 1.1;
+          const bx = x + 0.28 + rng() * (0.44 - bw / 2), bz = y + 0.28 + rng() * (0.44 - bd / 2);
+          const bm = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), towerMat);
+          bm.position.set(bx, bh / 2, bz);
+          mapGroup.add(bm);
+          if (rng() < 0.6) {
+            const v = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.25, 0.08, bd * 0.25), roofMat);
+            v.position.set(bx + (rng() - 0.5) * bw * 0.4, bh + 0.04, bz + (rng() - 0.5) * bd * 0.4);
+            mapGroup.add(v);
+          }
+        }
+      }
+    }
+
+    // signature landmarks with signs
+    for (const p of poiDefs) {
+      const bx = p.x + 0.5, bz = p.y + 0.5;
+      if (p.kind === 'BANK') {
+        const hall = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.3, 0.4),
+          new THREE.MeshLambertMaterial({ color: 0x3a3830 }));
+        hall.position.set(bx, 0.15, bz);
+        mapGroup.add(hall);
+        for (let c = -1; c <= 1; c++) {
+          const col = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.22, 6),
+            new THREE.MeshLambertMaterial({ color: 0x555142 }));
+          col.position.set(bx + c * 0.16, 0.11, bz - 0.24);
+          mapGroup.add(col);
+        }
+        addSign(bx, 0.52, bz, 'BANK', '#e8d48a');
+      } else if (p.kind === 'GROCERY') {
+        const store = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.14, 0.46),
+          new THREE.MeshLambertMaterial({ color: 0x27302b }));
+        store.position.set(bx, 0.07, bz);
+        mapGroup.add(store);
+        addSign(bx, 0.36, bz, 'GROCERY', '#9fd9a3');
+      } else if (p.kind === 'OFFICE') {
+        const tower = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.5, 0.3), towerMat);
+        tower.position.set(bx, 0.75, bz);
+        mapGroup.add(tower);
+        const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.22, 4),
+          new THREE.MeshBasicMaterial({ color: 0x8b93a5 }));
+        mast.position.set(bx, 1.6, bz);
+        mapGroup.add(mast);
+        addSign(bx, 1.78, bz, 'OFFICES', '#9ab4d9');
       }
     }
     scene.add(mapGroup);
@@ -219,6 +304,16 @@ var Renderer = (() => {
       const head = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.09, 0.12), headMat);
       head.position.y = 0.6;
       g.add(head);
+      // the aimed quadrant, shown forever at hull level: two ticks along
+      // the covered rays (fixed-sector doctrine)
+      const tickMat = new THREE.MeshBasicMaterial({ color: 0x8b93a5 });
+      for (const d of [cam.dir || 0, ((cam.dir || 0) + 1) % 4]) {
+        const [dx, dy] = Sightlines.DIRS[d];
+        const tick = new THREE.Mesh(new THREE.BoxGeometry(
+          dx !== 0 ? 0.11 : 0.03, 0.015, dy !== 0 ? 0.11 : 0.03), tickMat);
+        tick.position.set(dx * 0.15, 0.05, dy * 0.15);
+        g.add(tick);
+      }
     } else if (cam.type === 'LONG') {
       const head = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.09, 0.1), headMat);
       head.position.y = 0.62;
@@ -330,25 +425,51 @@ var Renderer = (() => {
 
   // ---------- vehicles & vandals ----------
 
-  // muted night-street car palette — variety without stealing a signal color
-  const CAR_COLORS = [0x9aa0ab, 0x7d8794, 0xa89078, 0x8a6f6a, 0x6f7f8f,
-    0x7a8a72, 0xb0a898, 0x5f6673, 0x94847f, 0x86929e, 0xa39a6f, 0x6d7a85];
+  // Vehicles are typed and coloured by their plate identity — the same
+  // car the case-file stills show and the witness described.
+  const VEH_DIMS = {
+    'COMPACT':    { l: 0.13, h: 0.055, w: 0.085, cab: [0.062, 0.034, 0.0] },
+    'SEDAN':      { l: 0.18, h: 0.048, w: 0.09,  cab: [0.082, 0.034, -0.012] },
+    'SPORTS CAR': { l: 0.17, h: 0.036, w: 0.09,  cab: [0.07, 0.026, -0.02] },
+    'SUV':        { l: 0.16, h: 0.075, w: 0.096, cab: [0.095, 0.038, 0.005] },
+    'PICKUP':     { l: 0.19, h: 0.058, w: 0.095, cab: null },
+    'VAN':        { l: 0.17, h: 0.082, w: 0.096, cab: null }
+  };
 
   function buildVehicle(veh) {
     const g = new THREE.Group();
-    const col = CAR_COLORS[hashStr(veh.plate) % CAR_COLORS.length];
-    const tint = 0.8 + (hashStr(veh.plate + 'x') % 30) / 100;
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.06, 0.09),
-      new THREE.MeshLambertMaterial({ color: new THREE.Color(col).multiplyScalar(tint) }));
-    body.position.y = 0.045;
-    g.add(body);
+    const ident = carIdentity(veh.plate);
+    const d = VEH_DIMS[ident.type] || VEH_DIMS.SEDAN;
+    const mat = new THREE.MeshLambertMaterial({ color: ident.color.hex });
+    const glassMat = new THREE.MeshLambertMaterial({ color: 0x0c0e13 });
+    if (ident.type === 'PICKUP') {
+      const cab = new THREE.Mesh(new THREE.BoxGeometry(d.l * 0.42, d.h * 1.35, d.w), mat);
+      cab.position.set(d.l * 0.2, d.h * 0.7, 0);
+      g.add(cab);
+      const bed = new THREE.Mesh(new THREE.BoxGeometry(d.l * 0.55, d.h * 0.75, d.w), mat);
+      bed.position.set(-d.l * 0.22, d.h * 0.42, 0);
+      g.add(bed);
+    } else {
+      const body = new THREE.Mesh(new THREE.BoxGeometry(d.l, d.h, d.w), mat);
+      body.position.y = d.h / 2 + 0.008;
+      g.add(body);
+      if (d.cab) {
+        const cab = new THREE.Mesh(new THREE.BoxGeometry(d.cab[0], d.cab[1], d.w * 0.82), glassMat);
+        cab.position.set(d.cab[2], d.h + d.cab[1] / 2, 0);
+        g.add(cab);
+      } else {
+        const cab = new THREE.Mesh(new THREE.BoxGeometry(d.l * 0.86, d.h * 0.5, d.w * 0.84), glassMat);
+        cab.position.set(0, d.h + d.h * 0.22, 0);
+        g.add(cab);
+      }
+    }
     const cone = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.3, 8, 1, true),
       new THREE.MeshBasicMaterial({
         color: V.HEADLIGHT, transparent: true, opacity: 0.16,
         blending: THREE.AdditiveBlending, depthWrite: false
       }));
     cone.rotation.z = Math.PI / 2;
-    cone.position.set(0.22, 0.04, 0);
+    cone.position.set(d.l * 0.5 + 0.14, 0.04, 0);
     g.add(cone);
     g.userData = { kind: 'vehicle', id: veh.id };
     return g;
@@ -555,8 +676,9 @@ var Renderer = (() => {
         case 'crime': crimeIcon(state, ev.node, V.RED, 6); break;
         case 'tip': if (ev.early) crimeIcon(state, ev.node, V.CYAN, 5); break;
         case 'arrest': {
-          const kase = state.cases.find(c => c.id === ev.caseId);
-          if (kase) ringFx(state, kase.spawnNode, V.TEAL, 1.6, 0.15, 0.8);
+          const node = ev.node !== undefined ? ev.node
+            : (state.cases.find(c => c.id === ev.caseId) || {}).spawnNode;
+          if (node !== undefined) ringFx(state, node, V.TEAL, 1.6, 0.15, 0.8);
           break;
         }
         case 'destroyed': dataLostFx(state, ev.node); markOverlayDirty(); break;
@@ -829,7 +951,7 @@ var Renderer = (() => {
       const p = nodePos(curState.map, nodeIdx);
       return worldToScreen(p.x, p.z, 0);
     },
-    carColorHex: (plate) => '#' + CAR_COLORS[hashStr(plate) % CAR_COLORS.length].toString(16).padStart(6, '0'),
+    carColorHex: (plate) => '#' + carIdentity(plate).color.hex.toString(16).padStart(6, '0'),
     pingNode: (n, color) => curState && ringFx(curState, n, color === 'red' ? V.RED : V.CYAN, 1.4, 0.15, 0.7),
     setGhost: (n, t, d, ok) => setGhost(curState, n, t, d, ok),
     clearGhost,

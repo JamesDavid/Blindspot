@@ -84,6 +84,11 @@ var Traffic = (() => {
       if (!cam) continue;
       const entry = cam.sight.find(e => e.seg === segId);
       if (!entry) continue;
+      // one read per camera per pass (player-directed): tracking a car
+      // takes multiple cameras, not one pole triple-dipping
+      if (!veh._lastReadBy) veh._lastReadBy = {};
+      if (state.time - (veh._lastReadBy[camId] || -Infinity) < CONFIG.Confidence.PER_VEHICLE_COOLDOWN) continue;
+      veh._lastReadBy[camId] = state.time;
       const conf = Sightlines.liveConfidence(state, cam, entry);
       const a = state.map.nodes[veh.path[veh.at - 1]], b = state.map.nodes[veh.path[veh.at]];
       const heading = a && b ? (b.x > a.x ? 0 : b.y > a.y ? 1 : b.x < a.x ? 2 : 3) : 0; // E S W N

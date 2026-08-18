@@ -112,8 +112,17 @@ var State = (() => {
   }
 
   function addCrew(state, id, kind) {
+    // each crew runs its own tuning, sampled deterministically (player-
+    // directed individuality): traits a log line could name, not a policy
+    const M = CONFIG.CrewMemory;
+    const draw = (band) => band[0] + rngNext(state, 'crewtraits') * (band[1] - band[0]);
+    const traits = {
+      learn: draw(M.TRAIT_LEARN) + (kind === 'SYNDICATE' ? M.SYNDICATE_PRO : 0),
+      avoid: draw(M.TRAIT_AVOID),
+      bold: draw(M.TRAIT_BOLD)
+    };
     state.crews[id] = {
-      id, kind,
+      id, kind, traits,
       known: {},            // camId -> time last sighted
       activeKnown: [],      // snapshot used for routing (rate-limited, §13.3)
       lastRelearn: -Infinity,

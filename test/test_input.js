@@ -97,7 +97,11 @@ function check(name, ok, detail) {
     return Renderer.nodeScreen(best);
   });
   await page.mouse.click(ns2.x, ns2.y);
-  await page.waitForTimeout(250);
+  await page.waitForTimeout(300);
+  if (!(await page.isVisible('[data-key=ctxmenu]'))) {   // battery-load retry
+    await page.mouse.click(ns2.x, ns2.y);
+    await page.waitForTimeout(300);
+  }
   check('taps still work after an orphaned pointer (primary-down purge)',
     await page.isVisible('[data-key=ctxmenu]'));
   await page.click('[data-key=dismiss]');

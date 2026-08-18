@@ -49,15 +49,21 @@ Game logic lives in `src/*.js` (concatenated in filename order); every tunable l
 
 Screenshots are portrait-phone captures (390×844) retaken as the game evolves.
 
+### 0. A city you can read — and crimes that name it *(done — player-directed)*
+
+The grid has recognisable parts of town: downtown towers ring the centre, ledged apartment blocks fill the mid ring, pitched-roof row houses line the fringe, and three signed landmarks anchor the majors — **the BANK with its columns, the flat-roofed GROCERY, the mast-topped OFFICES tower**. Crimes are specific to where they land: a BANK ROBBERY is not a MUGGING at the apartments or a CAR THEFT downtown. Every vehicle has a typed identity — compact, sedan, sports car, SUV, pickup, van — in one of ten colours, some with cracked windshields, dents, or a dead taillight. And the tip line tells you what the witness saw: *"Tip line: saw a RED SUV rob THE BANK!"* — sometimes crisply, sometimes just "a DARK CAR", which is exactly when the case file matters most.
+
+<img src="docs/12_districts.png" width="300">
+
 ### 1. A deterministic city, validated before you see it *(done)*
 
 Every match generates its street grid from a seed shown in the HUD — type it back in to replay a map exactly. Generation is validated against eight invariants (three distinct routes from the centre to an exit, no escape shorter than five observable segments, a straight run for the Long, arterial quotas, a syndicate district in its distance band, watcher-poles so cameras-watching-cameras is discoverable, bounded dead ends); failures re-roll deterministically and a golden seed is the last-resort fallback. `test_mapgen.js`: 200/200 seeds converge, zero fallbacks.
 
 <img src="docs/01_title.png" width="300">
 
-### 2. Cameras that produce information, not damage *(done)*
+### 2. Cameras that produce information, not damage *(done — player-directed quadrant aiming)*
 
-A Cyclops logs plates; it never stops anybody. Sightlines are geometry, not circles — the Post sees two blocks all ways, the Long five blocks down one street, the Dome its own corner from every angle. Confidence is environmental and never random: distance, angle, road class, weather, lens condition. Placement is about sightline *quality* — a camera at a bad angle on a fast arterial is a false-positive factory, and the ghost's quality pill warns you before you pay.
+A Cyclops logs plates; it never stops anybody. Sightlines are geometry, not circles, and **buildings occlude** — vision runs along street corridors only, never through a block. The Post is **aimed at a quadrant at placement, forever** (two adjacent street rays, chosen with ↺ ↻ before CONFIRM — fixed-sector doctrine, its aim ticks shown on the unit for the rest of the match); the Long stares five blocks down one street; the Dome is the unaimed corner unit. Confidence is environmental and never random: distance, angle, road class, weather, lens condition. Placement — and aiming — is the skill, and the ghost's quality pill quotes what you'll get before you pay.
 
 <img src="docs/03_menu.png" width="300"> <img src="docs/04_ghost.png" width="300">
 
@@ -69,7 +75,7 @@ The bar is global, always visible, and always felt: every read flashes gold when
 
 ### 4. Cases, coherence, and the case file *(done — player-directed)*
 
-Three corroborating reads on a route consistent with one vehicle's travel make an arrest; the file must then survive to trial. Contradictions never resolve silently — they surface a card you must CHARGE or RELEASE. Tap the card and the **case file opens: a synthetic camera still for every read**, drawn procedurally from what was genuinely photographed — the actual car in its actual colour, the plate as the OCR took it with characters smudged in proportion to confidence, rain streaks, lens-grime smears, heading arrows, and ⚠ cross-references between frames that cannot be the same vehicle. Compare each frame against the best one: a murky tan car heading west in a file full of crisp green cars heading north is your informed reason to release — and because misattached reads are always low-confidence, the murk *is* the uncertainty; the file never tells you outright. Charging the wrong plate still pays (the incentive points the wrong way on purpose); trust is what corrects you. Unanswered cards auto-release at expiry. `test_coherence.js` proves the invariants headlessly on every build.
+Three corroborating reads on a route consistent with one vehicle's travel make an arrest; the file must then survive to trial. Contradictions never resolve silently — they surface a card you must CHARGE or RELEASE. Tap the card and the **case file opens: a synthetic camera still for every read**, drawn procedurally from what was genuinely photographed — the actual car in its actual body type and colour, its damage if the frame is good enough to show it, the plate as the OCR took it with characters smudged in proportion to confidence, rain streaks, lens-grime smears, heading arrows, and ⚠ cross-references between frames that cannot be the same vehicle. The header quotes the witness — **"a RED SUV"** — and the question the sheet asks is the whole game: *does every frame match?* A murky tan pickup heading west in a file full of crisp red SUVs heading north is your informed reason to release — and because misattached reads are always low-confidence, the murk *is* the uncertainty; the file never tells you outright. Charging the wrong plate still pays (the incentive points the wrong way on purpose); trust is what corrects you. Unanswered cards auto-release at expiry. `test_coherence.js` proves the invariants headlessly on every build.
 
 <img src="docs/06_contested.png" width="300"> <img src="docs/11_casefile.png" width="300">
 

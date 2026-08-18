@@ -1,7 +1,7 @@
 // test_sim — a full scripted match runs without error; event counts land
 // in sane bands; both "economies" (budget and trust) stay alive and moving.
 'use strict';
-const { makeSandbox } = require('./harness');
+const { makeSandbox, aimedPlace } = require('./harness');
 const sb = makeSandbox();
 const { State, Sim, Actions, CONFIG, Economy } = sb;
 
@@ -17,11 +17,11 @@ function simpleController(state) {
     const zones = state.map.spawnZones;
     const targets = [state.map.center, ...zones];
     for (const n of targets) {
-      const r = Actions.place(state, n, 'POST');
+      const r = aimedPlace(sb, state, n);
       if (r.ok) break;
       // try neighbours if the pole is taken/bad
       for (const e of state.map.adj[n]) {
-        if (Actions.place(state, e.node, 'POST').ok) break;
+        if (aimedPlace(sb, state, e.node).ok) break;
       }
       break;
     }

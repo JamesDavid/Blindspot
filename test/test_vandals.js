@@ -2,7 +2,7 @@
 // legal target exists; the simultaneous cap holds; activity lands inside
 // authored bands. Build-time censuses, not survivor counts.
 'use strict';
-const { makeSandbox } = require('./harness');
+const { makeSandbox, aimedPlace } = require('./harness');
 const sb = makeSandbox();
 const { State, Sim, Actions, CONFIG } = sb;
 
@@ -16,7 +16,7 @@ function makeController(hardenAll) {
   return (state) => {
     if (state.cameras.length < 6 && state.budget >= 40) {
       for (const n of [state.map.center, ...state.map.spawnZones]) {
-        if (Actions.place(state, n, 'POST').ok) break;
+        if (aimedPlace(sb, state, n).ok) break;
       }
     }
     if (hardenAll) {

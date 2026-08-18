@@ -49,10 +49,13 @@ var VandalSystem = (() => {
     return Traffic.route(state, from, to, null);
   }
 
-  function spawn(state, type, crewId, forcedTargetCamId) {
-    const edges = edgeRoadNodes(state);
-    if (!edges.length) return null;
-    const from = edges[Math.floor(State.rngNext(state, 'vandals') * edges.length)].id;
+  function spawn(state, type, crewId, forcedTargetCamId, spawnNode) {
+    let from = spawnNode;
+    if (from === undefined) {
+      const edges = edgeRoadNodes(state);
+      if (!edges.length) return null;
+      from = edges[Math.floor(State.rngNext(state, 'vandals') * edges.length)].id;
+    }
     const vandal = {
       id: state.nextVandalId++, type, crewId,
       spawnNode: from, path: null, at: 0, segT: 0,
@@ -101,6 +104,8 @@ var VandalSystem = (() => {
         if (!crew.plate) crew.plate = makePlate(() => State.rngNext(state, 'plates'));
         kase = {
           id: state.nextCaseId++, type: 'VANDAL', plate: crew.plate, crewId: crew.id,
+          kind: 'VANDALISM', landmark: 'A CAMERA POLE',
+          witnessDesc: 'HOODED FIGURE',
           spawnNode: node, openedAt: state.time,
           coldAt: state.time + CONFIG.Cases.LIFETIME_SECONDS,
           status: 'OPEN', riskAnnounced: false,
@@ -118,6 +123,7 @@ var VandalSystem = (() => {
         trueMatch: true, conf, qualifying,
         caseId: qualifying && kase ? kase.id : null
       };
+      if (read.caseId !== null && kase) kase._leads = (kase._leads || 0) + 1;
       state.stats.reads++;
       if (qualifying) state.stats.qualifying++;
       CameraSystem.record(state, cam, read);

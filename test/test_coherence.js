@@ -3,7 +3,7 @@
 // the read log; (c) a contradictory pair always flags contested, never
 // closes silently. The adjudication card's credibility rests on this.
 'use strict';
-const { makeSandbox } = require('./harness');
+const { makeSandbox, aimedPlace } = require('./harness');
 const sb = makeSandbox();
 const { State, Sim, Actions, CaseSystem, CONFIG } = sb;
 
@@ -16,7 +16,7 @@ function check(name, ok, detail) {
 function controller(state) {
   if (state.cameras.length < 6 && state.budget >= 40) {
     for (const n of [state.map.center, ...state.map.spawnZones]) {
-      if (Actions.place(state, n, 'POST').ok) break;
+      if (aimedPlace(sb, state, n).ok) break;
     }
   }
   // adjudicate everything so both branches run
@@ -57,8 +57,13 @@ for (const seed of ['coh-a', 'coh-b', 'coh-c']) {
   // two cameras far apart
   const nodes = state.map.nodes.filter(n => state.map.adj[n.id].length >= 2 && !n.exit);
   const a = nodes[0], b = nodes[nodes.length - 1];
-  const ra = Actions.place(state, a.id, 'POST');
-  const rb = Actions.place(state, b.id, 'POST');
+  // quadrant-aimed POSTs: pick an aim that actually covers a road
+  const aimFor = (n) => {
+    for (let d = 0; d < 4; d++) if (sb.Sightlines.compute(state.map, n, 'POST', d).length) return d;
+    return 0;
+  };
+  const ra = Actions.place(state, a.id, 'POST', aimFor(a.id));
+  const rb = Actions.place(state, b.id, 'POST', aimFor(b.id));
   check('unit: two far cameras placed', ra.ok && rb.ok);
   const dist = CaseSystem.nodeDist(state, a.id, b.id);
   check('unit: cameras are far apart', dist > 6, dist);
@@ -87,14 +92,24 @@ for (const seed of ['coh-a', 'coh-b', 'coh-c']) {
   check('unit: contradictory evidence flags CONTESTED', kase.status === 'CONTESTED', kase.status);
   check('unit: contradiction recorded on the card', kase.contested && kase.contested.contradiction === true);
 
-  // and a coherent file does close
+  // and a coherent TRACK does close: anchored at the scene, spanning two
+  // cameras, spaced so the car could genuinely have driven it
   const kase2 = Object.assign({}, kase, { id: state.nextCaseId++, status: 'OPEN', contested: null, _peakUsable: 0 });
   state.cases.push(kase2);
   const mk2 = (cam, t) => { const r = mk(cam, t); r.caseId = kase2.id; return r; };
-  mk2(ra.cam, 20); mk2(ra.cam, 24); mk2(ra.cam, 28); // same pole, sequential: coherent
-  state.time = 30;
+  const travel = Math.ceil(dist / sb.Traffic.maxSegPerSec()) + 3;
+  mk2(ra.cam, 20); mk2(ra.cam, 27); mk2(rb.cam, 27 + travel); // scene pole twice, then the far pole in plausible time
+  state.time = 29 + travel;
   CaseSystem.tick(state, 0.1);
-  check('unit: coherent evidence corroborates (arrest made)', kase2.status === 'ARREST', kase2.status);
+  check('unit: a coherent cross-camera track corroborates (arrest made)', kase2.status === 'ARREST', kase2.status);
+  // but the same three reads from ONE pole may not close a case alone
+  const kase3 = Object.assign({}, kase, { id: state.nextCaseId++, status: 'OPEN', contested: null, _peakUsable: 0 });
+  state.cases.push(kase3);
+  const mk3 = (cam, t) => { const r = mk(cam, t); r.caseId = kase3.id; r.expiresAt = t + 200; return r; };
+  mk3(ra.cam, 100); mk3(ra.cam, 106); mk3(ra.cam, 112);
+  state.time = 114;
+  CaseSystem.tick(state, 0.1);
+  check('unit: one pole triple-dipping cannot make an arrest', kase3.status !== 'ARREST', kase3.status);
 }
 
 if (fails) { console.error(`test_coherence: ${fails} FAILURE(S)`); process.exit(1); }

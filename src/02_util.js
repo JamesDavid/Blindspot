@@ -73,6 +73,45 @@ function makePlate(rng) {
   return p;
 }
 
+// ---- car identity: type, colour, damage — deterministic from the plate,
+// so the same vehicle looks the same in traffic, in the case-file stills,
+// and in a witness's description. Night-street palette: distinct without
+// stealing any signal colour.
+var CAR_TYPES = ['COMPACT', 'SEDAN', 'SPORTS CAR', 'SUV', 'PICKUP', 'VAN'];
+var CAR_COLOR_TABLE = [
+  { name: 'RED',    hex: 0x9c4038, tone: 'DARK' },
+  { name: 'BLUE',   hex: 0x3d5a80, tone: 'DARK' },
+  { name: 'WHITE',  hex: 0xc9cdd6, tone: 'LIGHT' },
+  { name: 'BLACK',  hex: 0x23252c, tone: 'DARK' },
+  { name: 'SILVER', hex: 0x9aa0ab, tone: 'LIGHT' },
+  { name: 'GREEN',  hex: 0x52704f, tone: 'DARK' },
+  { name: 'TAN',    hex: 0xa89078, tone: 'LIGHT' },
+  { name: 'BROWN',  hex: 0x6b4f42, tone: 'DARK' },
+  { name: 'YELLOW', hex: 0xb09a3f, tone: 'LIGHT' },
+  { name: 'GREY',   hex: 0x6f7681, tone: 'DARK' }
+];
+
+function carIdentity(plate) {
+  const h1 = hashStr(plate + '/t'), h2 = hashStr(plate + '/c'), h3 = hashStr(plate + '/d');
+  const damage = [];
+  if (h3 % 100 < 16) damage.push('CRACKED WINDSHIELD');
+  if ((h3 >>> 3) % 100 < 13) damage.push('DENTED PANEL');
+  if ((h3 >>> 7) % 100 < 10) damage.push('BROKEN TAILLIGHT');
+  return {
+    type: CAR_TYPES[h1 % CAR_TYPES.length],
+    color: CAR_COLOR_TABLE[h2 % CAR_COLOR_TABLE.length],
+    damage
+  };
+}
+
+// What a witness actually says: usually the colour and type, sometimes
+// just "a dark car" — vague enough that the stills still matter.
+function witnessDescription(identity, r1, r2) {
+  const color = r1 < 0.7 ? identity.color.name : (identity.color.tone === 'DARK' ? 'DARK' : 'LIGHT-COLORED');
+  const type = r2 < 0.75 ? identity.type : 'CAR';
+  return color + ' ' + type;
+}
+
 // Threshold band label for a value, from CONFIG bands [[min,label],...].
 function bandLabel(bands, v) {
   let label = bands[0][1];

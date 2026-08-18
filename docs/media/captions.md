@@ -11,3 +11,5 @@
 9. `09_verdict` — The warrant lands. Every match ends with a weighed verdict — and you can refuse the ruling.
 10. `10_demo` — WATCH A SHIFT: an evolved champion plays the real menus, and wins.
 11. `11_casefile` — The case file: a still for every read. One of these cars is not like the others.
+12. `12_districts` — A city you can read: the bank, the grocery, the office tower, row houses at the fringe.
+13. `13_quadrant_ghost` — Quadrant aiming: the Post watches one corner, forever. Turn it before you pay.
