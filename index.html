@@ -22,7 +22,7 @@
 <script>
 'use strict';
 /* BLIND SPOT — a camera-network tower defense prototype. */
-window.BUILDSTAMP = 'BUILD 2026-08-18 05:54 UTC';
+window.BUILDSTAMP = 'BUILD 2026-08-18 06:17 UTC';
 
 // ============================================================
 // CONFIG
@@ -5074,16 +5074,44 @@ var UI = (() => {
       CaseSystem.nodeDist(state, s1.b, s2.a), CaseSystem.nodeDist(state, s1.b, s2.b));
   }
 
-  // The sightings map: where each frame's CAR was, in time order, with
-  // the legs between them — and a named problem when a leg is impossible
-  // ("9 blocks in 3s: nothing drives that fast").
+  // The inferred drive between two sightings: the shortest street path
+  // from the first car position to the second (player-directed — a car
+  // moves along roads, so the map should too). Returns grid-space points.
+  function inferLegPath(r1, r2) {
+    const map = state.map;
+    const s1 = map.segs[r1.segId], s2 = map.segs[r2.segId];
+    const p1 = carXY(r1), p2 = carXY(r2);
+    if (!s1 || !s2 || r1.segId === r2.segId) return [p1, p2];
+    // route between the closest pair of segment ends
+    let e1 = s1.a, e2 = s2.a, best = Infinity;
+    for (const a of [s1.a, s1.b]) for (const b of [s2.a, s2.b]) {
+      const d = CaseSystem.nodeDist(state, a, b);
+      if (d < best) { best = d; e1 = a; e2 = b; }
+    }
+    const path = Traffic.route(state, e1, e2, null);
+    const pts = [p1];
+    if (path) for (const n of path) pts.push({ x: map.nodes[n].x, y: map.nodes[n].y });
+    pts.push(p2);
+    return pts;
+  }
+
+  // The sightings map: where each frame's CAR was, in time order, the
+  // INFERRED street route between them (impossible legs stay straight
+  // dashed red — a lie can't drive), and the landmarks for bearings.
   function drawCaseMap(cv, kase, ev) {
     const g = cv.getContext('2d');
     const map = state.map, W = cv.width, H = cv.height, m = 26;
     g.fillStyle = '#0a0c11'; g.fillRect(0, 0, W, H);
-    // zoom to the case's own neighbourhood: scene + every car position
+
+    // infer the drives first, so the zoom fits the whole route
+    const legs = [];
+    for (let i = 1; i < ev.length; i++) {
+      const ok = CaseSystem.pairCoherent(state, ev[i - 1], ev[i]);
+      legs.push({ ok, pts: ok ? inferLegPath(ev[i - 1], ev[i]) : [carXY(ev[i - 1]), carXY(ev[i])] });
+    }
     const sn = map.nodes[kase.spawnNode];
     const pts = [{ x: sn.x, y: sn.y }, ...ev.map(r => carXY(r))];
+    for (const leg of legs) pts.push(...leg.pts);
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
     for (const p of pts) {
       x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
@@ -5101,6 +5129,24 @@ var UI = (() => {
     for (const s of map.segs) {
       g.beginPath(); g.moveTo(px(s.a), py(s.a)); g.lineTo(px(s.b), py(s.b)); g.stroke();
     }
+    // landmarks for bearings (muted — the route stays dominant)
+    g.font = '11px monospace'; g.textAlign = 'center'; g.textBaseline = 'bottom';
+    const mark = (nodeIdx, label, color) => {
+      if (nodeIdx === undefined) return;
+      const n = map.nodes[nodeIdx];
+      if (n.x < x0 - 0.5 || n.x > x1 + 0.5 || n.y < y0 - 0.5 || n.y > y1 + 0.5) return;
+      const x = ox + n.x * scale, y = oy + n.y * scale;
+      g.fillStyle = color;
+      g.fillRect(x - 5, y - 5, 10, 10);
+      g.fillText(label, x, y - 8);
+    };
+    if (map.poi) {
+      mark(map.poi.BANK, 'BANK', '#8a7a4a');
+      mark(map.poi.GROCERY, 'GROCERY', '#4a6a52');
+      mark(map.poi.OFFICE, 'OFFICES', '#4a5a78');
+    }
+    mark(map.syndicate, 'SYNDICATE', '#6a3a44');
+    for (const e of map.exits) mark(e, 'EXIT', '#3a4152');
     // the scene
     g.save();
     g.translate(px(kase.spawnNode), py(kase.spawnNode));
@@ -5109,18 +5155,18 @@ var UI = (() => {
     g.fillRect(-7, -7, 14, 14);
     g.restore();
     const cx2 = (p) => ox + p.x * scale, cy2 = (p) => oy + p.y * scale;
-    // legs between consecutive CAR positions — impossible legs paint LAST
-    // so a clean return leg on the same street can never hide them
+    // the inferred drives — impossible legs paint LAST so a clean return
+    // leg on the same street can never hide them
     for (const pass of [true, false]) {
-      for (let i = 1; i < ev.length; i++) {
-        const a = ev[i - 1], b = ev[i];
-        const ok = CaseSystem.pairCoherent(state, a, b);
-        if (ok !== pass) continue;
-        const pa = carXY(a), pb = carXY(b);
-        g.strokeStyle = ok ? 'rgba(57,211,192,0.75)' : 'rgba(255,90,82,0.95)';
-        g.lineWidth = ok ? 3 : 4;
-        g.setLineDash(ok ? [] : [7, 6]);
-        g.beginPath(); g.moveTo(cx2(pa), cy2(pa)); g.lineTo(cx2(pb), cy2(pb)); g.stroke();
+      for (const leg of legs) {
+        if (leg.ok !== pass) continue;
+        g.strokeStyle = leg.ok ? 'rgba(57,211,192,0.75)' : 'rgba(255,90,82,0.95)';
+        g.lineWidth = leg.ok ? 3.5 : 4;
+        g.setLineDash(leg.ok ? [] : [7, 6]);
+        g.lineJoin = 'round';
+        g.beginPath();
+        leg.pts.forEach((p, i) => i === 0 ? g.moveTo(cx2(p), cy2(p)) : g.lineTo(cx2(p), cy2(p)));
+        g.stroke();
         g.setLineDash([]);
       }
     }
