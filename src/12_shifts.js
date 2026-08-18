@@ -55,9 +55,11 @@ var ShiftSystem = (() => {
     let syndCount = countRound(state, row.synd * m.crimeMult * esc);
     if (sh.num === CONFIG.Vandals.FIXER.FIRST_SHIFT && syndCount === 0) syndCount = 1;
     for (let i = 0; i < syndCount; i++) {
+      // syndicate jobs land late in their shift (night work) — which is
+      // also what keeps shift 4's case open into the shift-5 strike
       const t = sh.num === CONFIG.Vandals.FIXER.FIRST_SHIFT && i === 0
         ? state.time + CONFIG.Shifts.TELEGRAPH * 2 + CONFIG.Vandals.FIXER.DESTROY_SECONDS + 8
-        : state.time + rng() * span;
+        : state.time + span * (0.5 + rng() * 0.5);
       sh.pendingCrimes.push({ t, type: 'SYNDICATE' });
     }
 

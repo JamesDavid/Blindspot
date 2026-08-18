@@ -13,6 +13,7 @@ var SaveSystem = (() => {
     const snap = {
       version: state.version,
       seed: state.seed,
+      eventSeq: state.eventSeq,
       time: state.time,
       rngState: state.rngState,
       threshold: state.threshold,
@@ -50,7 +51,7 @@ var SaveSystem = (() => {
     const map = MapGen.generate(snap.seed);
     const state = Object.assign({}, snap, {
       map,
-      events: [],
+      events: [], eventSeq: snap.eventSeq || 0,
       covSegs: null, covNodes: null,
       dda: true,                  // resumed matches are real matches
       tutorialActive: false       // the tutorial never re-runs mid-resume (§17.2)

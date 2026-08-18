@@ -9,7 +9,6 @@ var Sim = (() => {
   function tick(state, rawDt) {
     const dt = Math.min(CONFIG.Sim.DT_CLAMP, rawDt);
     if (state.verdict) return;      // verdict screens freeze the city
-    state.events.length = 0;
     state.time += dt;
 
     ShiftSystem.tick(state, dt);

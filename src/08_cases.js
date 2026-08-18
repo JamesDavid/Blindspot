@@ -146,8 +146,13 @@ var CaseSystem = (() => {
     }
     // Ambient vehicle. A clean read identifies an uninvolved plate and is
     // discarded; an ambiguous one (below CLARITY) can misattach to the
-    // nearest open case — §7.1's trap, priced by the threshold.
-    if (read.conf >= CONFIG.Confidence.CLARITY) return;
+    // nearest open case — §7.1's trap, priced by the threshold. How often
+    // an ambiguous plate happens to resemble a suspect's scales with how
+    // ambiguous the read is: a lax bar admits liars, a strict one rarely.
+    const C = CONFIG.Confidence;
+    if (read.conf >= C.CLARITY) return;
+    const p = C.MISREAD_BASE * (C.CLARITY - read.conf) / C.CLARITY;
+    if (State.rngNext(state, 'misread') >= p) return;
     let best = null, bestD = Infinity;
     const s = state.map.segs[read.segId];
     for (const kase of state.cases) {
@@ -157,6 +162,7 @@ var CaseSystem = (() => {
       const d = Math.min(nodeDist(state, s.a, kase.spawnNode), nodeDist(state, s.b, kase.spawnNode));
       if (d < bestD) { bestD = d; best = kase; }
     }
+    if (bestD > C.MISREAD_MAX_DIST) return;
     if (best) {
       read.caseId = best.id;
       read.trueMatch = false;

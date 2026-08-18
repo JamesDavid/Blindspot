@@ -23,7 +23,9 @@ var CONFIG = Object.freeze({
     RAIN_PENALTY: 20,               // spec-authored: forces the threshold to move at shift 6
     DEGRADE_PER_TAG: 15,            // spec-authored
     DEGRADE_FLOOR: 25,              // spec-authored: a degraded camera never goes silent — it lies
-    CLARITY: 75                     // judgment-tuned: reads below this are ambiguous and can misattach to an open case (§7.1's trap)
+    CLARITY: 75,                    // judgment-tuned: reads below this are ambiguous and can misattach to an open case (§7.1's trap)
+    MISREAD_BASE: 0.5,              // judgment-tuned: misattach likelihood scales with ambiguity — near-CLARITY reads almost never lie, deep-LAX reads often do
+    MISREAD_MAX_DIST: 3             // judgment-tuned: ambiguous sightings only misattach near the crime scene — believable lies, not cross-town ones
   },
 
   Threshold: {

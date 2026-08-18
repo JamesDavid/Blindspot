@@ -34,11 +34,21 @@ var State = (() => {
     emit(state, { type: 'log', msg });
   }
 
-  // Transient per-tick events; the renderer/audio drain them each frame,
-  // headless code ignores them (they are cleared at the top of each tick).
+  // Events are a cursor-based ring: every consumer (renderer, audio,
+  // tests, the demo) tracks its own seq and asks for "events since". They
+  // are never cleared mid-pipeline — actions fire between ticks and their
+  // events must survive to the next consumer read.
   function emit(state, ev) {
     ev.t = state.time;
+    ev.seq = ++state.eventSeq;
     state.events.push(ev);
+    if (state.events.length > 400) state.events.splice(0, state.events.length - 400);
+  }
+
+  function eventsSince(state, seq) {
+    const out = [];
+    for (const ev of state.events) if (ev.seq > seq) out.push(ev);
+    return out;
   }
 
   function newMatch(seed, opts) {
@@ -76,7 +86,7 @@ var State = (() => {
       contestedThisShift: 0,
       falseChargesThisShift: 0,
       warn: { clearance: -1, trust: -1 }, // shift number when the floor warning fired
-      events: [],
+      events: [], eventSeq: 0,
       logLines: [],
       seenKeys: opts.seenKeys || {},
       covSegs: null, covNodes: null,  // rebuilt by Sightlines.rebuildCoverage
@@ -125,7 +135,7 @@ var State = (() => {
     return bandLabel(CONFIG.Threshold.BANDS, state.threshold);
   }
 
-  return { newMatch, addCrew, rngNext, log, emit, clearance, thresholdBand };
+  return { newMatch, addCrew, rngNext, log, emit, eventsSince, clearance, thresholdBand };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { State, Actions };
