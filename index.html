@@ -22,7 +22,7 @@
 <script>
 'use strict';
 /* BLIND SPOT — a camera-network tower defense prototype. */
-window.BUILDSTAMP = 'BUILD 2026-08-18 16:43 UTC';
+window.BUILDSTAMP = 'BUILD 2026-08-18 16:47 UTC';
 
 // ============================================================
 // CONFIG
@@ -3423,12 +3423,15 @@ var Renderer = (() => {
 
     // every part of town gets its name, not just the landmarks
     // (player-directed): muted labels so they never compete with signals
-    const addDistrictLabel = (nodeIdx, text) => {
+    const addDistrictLabel = (nodeIdx, text, dz) => {
       if (nodeIdx === undefined || nodeIdx < 0) return;
       const n = map.nodes[nodeIdx];
       const sp = textSprite(text, '#7d8798', 'rgba(8,10,14,0.72)');
+      // a name-tag, not a world object: always legible over rings/markers
+      sp.material.depthTest = false;
+      sp.renderOrder = 5;
       sp.scale.set(0.62, 0.17, 1);
-      sp.position.set(n.x, 0.42, n.y);
+      sp.position.set(n.x, 0.42, n.y + (dz || 0));
       mapGroup.add(sp);
     };
     if (map.districts) {
@@ -3438,7 +3441,9 @@ var Renderer = (() => {
         return pick(cands).id;
       };
       addDistrictLabel(map.center, 'DOWNTOWN');
-      addDistrictLabel(map.syndicate, 'SYNDICATE BLOCK');
+      // nudged off the node: the syndicate pole collects telegraph rings
+      // and scene markers, and the label must never sit under them
+      addDistrictLabel(map.syndicate, 'SYNDICATE BLOCK', -0.38);
       addDistrictLabel(byDistrict('APARTMENTS', c => c.reduce((m, n) => n.y < m.y ? n : m, c[0])), 'APARTMENTS');
       addDistrictLabel(byDistrict('APARTMENTS', c => c.reduce((m, n) => n.y > m.y ? n : m, c[0])), 'APARTMENTS');
       addDistrictLabel(byDistrict('HOUSES', c => c.reduce((m, n) => n.y < m.y ? n : m, c[0])), 'ROW HOUSES');
