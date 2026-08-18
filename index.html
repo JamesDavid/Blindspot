@@ -22,7 +22,7 @@
 <script>
 'use strict';
 /* BLIND SPOT — a camera-network tower defense prototype. */
-window.BUILDSTAMP = 'BUILD 2026-08-18 03:30 UTC';
+window.BUILDSTAMP = 'BUILD 2026-08-18 03:46 UTC';
 
 // ============================================================
 // CONFIG
@@ -2848,9 +2848,9 @@ var Renderer = (() => {
   // Visual constants — presentation only, not game-tunable (§22 governs
   // system logic; these are paint).
   const V = {
-    BG: 0x0b0d12, ROAD: 0x24272e, ROAD_ART: 0x2b2e36, LANE: 0x3a3e47,
-    NODE: 0x2a2d34, POOL: 0xff9a2a, BUILDING: 0x14161c, BUILDING2: 0x171a21,
-    ROOF: 0x1b1e26, EXIT: 0x2e3340,
+    BG: 0x0b0d12, ROAD: 0x2a2e37, ROAD_ART: 0x333844, LANE: 0x4d525e,
+    NODE: 0x31353f, POOL: 0xff9a2a, BUILDING: 0x14161c, BUILDING2: 0x171a21,
+    ROOF: 0x1b1e26, EXIT: 0x2e3340, WINDOW: 0xffd98a, WINDOW2: 0x9ab4d9,
     GOLD: 0xffc84a, MISS: 0x6a6f78, TEAL: 0x39d3c0, RED: 0xff5a52,
     AMBER: 0xffb44a, CYAN: 0x53c8ff, VEHICLE: 0x8a8f99, HEADLIGHT: 0xffe9b0,
     SCRAPPER: 0xa0623a, TAGGER: 0x5da05a, FIXER: 0x23252d,
@@ -2859,9 +2859,9 @@ var Renderer = (() => {
   };
 
   let renderer, scene, camera, canvas;
-  let mapGroup = null, camGroup = null, vehGroup = null, vandalGroup = null, fxGroup = null, overlayGroup = null;
+  let mapGroup = null, camGroup = null, vehGroup = null, vandalGroup = null, fxGroup = null, overlayGroup = null, caseGroup = null;
   let curState = null;
-  const camMeshes = new Map(), vehMeshes = new Map(), vandalMeshes = new Map();
+  const camMeshes = new Map(), vehMeshes = new Map(), vandalMeshes = new Map(), caseMarkers = new Map();
   const fx = [];            // live effects {mesh, t, dur, kind, update}
   let rainSys = null, raining = false;
   let ghost = null, selectedRing = null, tutorialRing = null;
@@ -2885,11 +2885,15 @@ var Renderer = (() => {
     resize();
     window.addEventListener('resize', resize);
 
-    const amb = new THREE.AmbientLight(0x8890a8, 0.75);
+    // three-source night lighting: cool ambient, a moon key from the NE,
+    // and a hemisphere so box faces separate — depth is legibility
+    const amb = new THREE.AmbientLight(0x8890a8, 0.55);
     scene.add(amb);
-    const dir = new THREE.DirectionalLight(0xbdc8ff, 0.5);
-    dir.position.set(3, 10, 2);
+    const dir = new THREE.DirectionalLight(0xc8d4ff, 0.65);
+    dir.position.set(4, 10, -3);
     scene.add(dir);
+    const hemi = new THREE.HemisphereLight(0x354060, 0x14161c, 0.7);
+    scene.add(hemi);
   }
 
   function resize() {
@@ -2948,8 +2952,9 @@ var Renderer = (() => {
       }
     }
 
-    // intersections + sodium pools
+    // intersections: crosswalk ticks + sodium pools with a lamp head
     const nodeMat = new THREE.MeshLambertMaterial({ color: V.NODE });
+    const crossMat = new THREE.MeshBasicMaterial({ color: 0x565c68 });
     const poolTex = radialTexture('rgba(255,154,42,0.55)');
     for (const n of map.nodes) {
       if (!map.adj[n.id].length) continue;
@@ -2957,14 +2962,34 @@ var Renderer = (() => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.022, w), nodeMat);
       m.position.set(n.x, 0.011, n.y);
       mapGroup.add(m);
+      // crosswalk ticks on each connected approach
+      for (const e of map.adj[n.id]) {
+        const other = map.nodes[e.node];
+        const dx = Math.sign(other.x - n.x), dy = Math.sign(other.y - n.y);
+        for (let t = -1; t <= 1; t++) {
+          const tick = new THREE.Mesh(new THREE.BoxGeometry(
+            dx !== 0 ? 0.02 : 0.06, 0.004, dy !== 0 ? 0.02 : 0.06), crossMat);
+          tick.position.set(n.x + dx * 0.3 + (dy !== 0 ? t * 0.08 : 0), 0.026,
+            n.y + dy * 0.3 + (dx !== 0 ? t * 0.08 : 0));
+          mapGroup.add(tick);
+        }
+      }
       if ((n.x + n.y) % 2 === 0) {
         const pool = new THREE.Sprite(new THREE.SpriteMaterial({
-          map: poolTex, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.35
+          map: poolTex, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.5
         }));
-        pool.scale.set(1.4, 1.4, 1);
-        pool.position.set(n.x, 0.05, n.y);
-        pool.material.rotation = 0;
+        pool.scale.set(1.5, 1.5, 1);
+        pool.position.set(n.x + 0.22, 0.06, n.y - 0.22);
         mapGroup.add(pool);
+        // the streetlamp itself: pole + warm head
+        const lp = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.016, 0.4, 5),
+          new THREE.MeshLambertMaterial({ color: 0x2e323c }));
+        lp.position.set(n.x + 0.22, 0.2, n.y - 0.22);
+        mapGroup.add(lp);
+        const lh = new THREE.Mesh(new THREE.SphereGeometry(0.028, 6, 5),
+          new THREE.MeshBasicMaterial({ color: 0xffc06a }));
+        lh.position.set(n.x + 0.22, 0.41, n.y - 0.22);
+        mapGroup.add(lh);
       }
       if (n.exit) {
         const em = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.04, 0.5),
@@ -2998,6 +3023,20 @@ var Renderer = (() => {
       sp.position.set(x, y, z);
       mapGroup.add(sp);
     };
+    // lit windows on the camera-facing (south) faces — the night city
+    // reads as inhabited, and tall lit towers mark downtown at a glance
+    const winMats = [new THREE.MeshBasicMaterial({ color: V.WINDOW }),
+      new THREE.MeshBasicMaterial({ color: V.WINDOW2 }),
+      new THREE.MeshBasicMaterial({ color: 0x6a6f66 })];
+    const addWindows = (bx, bh, bz, bw, bd, count) => {
+      for (let i = 0; i < count; i++) {
+        const wm = winMats[Math.floor(rng() * winMats.length)];
+        const win = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.04, 0.006), wm);
+        win.position.set(bx + (rng() - 0.5) * bw * 0.7,
+          0.08 + rng() * (bh - 0.14), bz + bd / 2 + 0.004);
+        mapGroup.add(win);
+      }
+    };
 
     const poiCells = new Set();
     const poiDefs = [];
@@ -3026,6 +3065,12 @@ var Renderer = (() => {
           roof.rotation.y = Math.PI / 4;
           roof.position.set(hx, hh + 0.045, hz);
           mapGroup.add(roof);
+          if (rng() < 0.6) {   // a warm porch light
+            const pl = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.03, 0.006),
+              winMats[0]);
+            pl.position.set(hx + (rng() - 0.5) * hw * 0.5, hh * 0.45, hz + hw / 2 + 0.004);
+            mapGroup.add(pl);
+          }
         }
       } else if (district === 'APARTMENTS') {
         const bw = 0.34 + rng() * 0.18, bd = 0.3 + rng() * 0.16;
@@ -3039,6 +3084,7 @@ var Renderer = (() => {
           ledge.position.set(bx, bh * l / 3, bz);
           mapGroup.add(ledge);
         }
+        addWindows(bx, bh, bz, bw, bd, 2 + Math.floor(rng() * 3));
       } else {                                    // DOWNTOWN / OFFICE ring: towers
         const cnt = 1 + (rng() < 0.35 ? 1 : 0);
         for (let i = 0; i < cnt; i++) {
@@ -3048,6 +3094,7 @@ var Renderer = (() => {
           const bm = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), towerMat);
           bm.position.set(bx, bh / 2, bz);
           mapGroup.add(bm);
+          addWindows(bx, bh, bz, bw, bd, 3 + Math.floor(rng() * 4));
           if (rng() < 0.6) {
             const v = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.25, 0.08, bd * 0.25), roofMat);
             v.position.set(bx + (rng() - 0.5) * bw * 0.4, bh + 0.04, bz + (rng() - 0.5) * bd * 0.4);
@@ -3131,41 +3178,69 @@ var Renderer = (() => {
 
   function buildCamMesh(state, cam) {
     const g = new THREE.Group();
-    const poleMat = new THREE.MeshLambertMaterial({ color: 0x3c414c });
-    const headMat = new THREE.MeshLambertMaterial({ color: 0x5a606e });
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.045, 0.55, 6), poleMat);
+    const poleMat = new THREE.MeshLambertMaterial({ color: 0x454b58 });
+    const headMat = new THREE.MeshLambertMaterial({ color: 0x6a7180 });
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.05, 0.55, 6), poleMat);
     pole.position.y = 0.28;
     g.add(pole);
+    // every unit stands in its own pool of light — find your network at
+    // a glance (additive: it hides nothing)
+    if (cam.id !== -1 || true) {
+      const pool = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: radialTexture('rgba(122,217,255,0.5)'),
+        blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.4
+      }));
+      pool.scale.set(0.85, 0.85, 1);
+      pool.position.y = 0.03;
+      g.add(pool);
+    }
     if (cam.type === 'POST') {
-      const head = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.09, 0.12), headMat);
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.1, 0.13), headMat);
       head.position.y = 0.6;
       g.add(head);
-      // the aimed quadrant, shown forever at hull level: two ticks along
-      // the covered rays (fixed-sector doctrine)
-      const tickMat = new THREE.MeshBasicMaterial({ color: 0x8b93a5 });
+      // a lit lens on the quadrant bisector
+      const [ax, ay] = Sightlines.DIRS[cam.dir || 0];
+      const [bx2, by2] = Sightlines.DIRS[((cam.dir || 0) + 1) % 4];
+      const lens = new THREE.Mesh(new THREE.SphereGeometry(0.026, 6, 5),
+        new THREE.MeshBasicMaterial({ color: 0xffc84a }));
+      lens.position.set((ax + bx2) * 0.055, 0.6, (ay + by2) * 0.055);
+      g.add(lens);
+      // the aimed quadrant, shown forever at hull level: two gold ticks
+      // along the covered rays (fixed-sector doctrine)
+      const tickMat = new THREE.MeshBasicMaterial({ color: 0xd8b46a });
       for (const d of [cam.dir || 0, ((cam.dir || 0) + 1) % 4]) {
         const [dx, dy] = Sightlines.DIRS[d];
         const tick = new THREE.Mesh(new THREE.BoxGeometry(
-          dx !== 0 ? 0.11 : 0.03, 0.015, dy !== 0 ? 0.11 : 0.03), tickMat);
-        tick.position.set(dx * 0.15, 0.05, dy * 0.15);
+          dx !== 0 ? 0.13 : 0.035, 0.016, dy !== 0 ? 0.13 : 0.035), tickMat);
+        tick.position.set(dx * 0.16, 0.05, dy * 0.16);
         g.add(tick);
       }
     } else if (cam.type === 'LONG') {
-      const head = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.09, 0.1), headMat);
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.1, 0.11), headMat);
       head.position.y = 0.62;
       g.add(head);
       // lens hood wedge: shows the aim forever, sized hull-level (§12)
-      const hood = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.16, 4),
-        new THREE.MeshBasicMaterial({ color: 0x8b93a5 }));
+      const hood = new THREE.Mesh(new THREE.ConeGeometry(0.065, 0.18, 4),
+        new THREE.MeshBasicMaterial({ color: 0xd8b46a }));
       hood.rotation.z = -Math.PI / 2;
-      hood.position.set(0.16, 0.62, 0);
+      hood.position.set(0.18, 0.62, 0);
       g.add(hood);
+      const lens = new THREE.Mesh(new THREE.SphereGeometry(0.024, 6, 5),
+        new THREE.MeshBasicMaterial({ color: 0xffc84a }));
+      lens.position.set(0.12, 0.62, 0);
+      g.add(lens);
       const d = Sightlines.DIRS[cam.dir];
       g.rotation.y = -Math.atan2(d[1], d[0]);
     } else if (cam.type === 'DOME') {
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), headMat);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.095, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2),
+        new THREE.MeshLambertMaterial({ color: 0x7a90a8 }));
       head.position.y = 0.58;
       g.add(head);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.095, 0.012, 6, 16),
+        new THREE.MeshBasicMaterial({ color: 0x53c8ff }));
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = 0.58;
+      g.add(ring);
     } else if (cam.type === 'RELAY') {
       const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.02, 0.3, 5), poleMat);
       mast.position.y = 0.68;
@@ -3249,13 +3324,20 @@ var Renderer = (() => {
       const color = conf >= state.threshold + 10 ? V.TEAL
         : conf >= state.threshold ? V.AMBER : V.RED;
       const mat = new THREE.MeshBasicMaterial({
-        color, transparent: true, opacity: conf >= state.threshold ? 0.13 : 0.09,
+        color, transparent: true, opacity: conf >= state.threshold ? 0.17 : 0.12,
         blending: THREE.AdditiveBlending, depthWrite: false
       });
       const m = new THREE.Mesh(new THREE.BoxGeometry(
         s.dir === 'H' ? len : 0.5, 0.004, s.dir === 'H' ? 0.5 : len), mat);
       m.position.set((a.x + b.x) / 2, 0.03, (a.z + b.z) / 2);
       overlayGroup.add(m);
+      // a crisp scanline down the covered street: coverage reads at any zoom
+      const line = new THREE.Mesh(new THREE.BoxGeometry(
+        s.dir === 'H' ? len : 0.05, 0.005, s.dir === 'H' ? 0.05 : len),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: conf >= state.threshold ? 0.3 : 0.22,
+          blending: THREE.AdditiveBlending, depthWrite: false }));
+      line.position.set((a.x + b.x) / 2, 0.035, (a.z + b.z) / 2);
+      overlayGroup.add(line);
     }
   }
 
@@ -3264,12 +3346,12 @@ var Renderer = (() => {
   // Vehicles are typed and coloured by their plate identity — the same
   // car the case-file stills show and the witness described.
   const VEH_DIMS = {
-    'COMPACT':    { l: 0.13, h: 0.055, w: 0.085, cab: [0.062, 0.034, 0.0] },
-    'SEDAN':      { l: 0.18, h: 0.048, w: 0.09,  cab: [0.082, 0.034, -0.012] },
-    'SPORTS CAR': { l: 0.17, h: 0.036, w: 0.09,  cab: [0.07, 0.026, -0.02] },
-    'SUV':        { l: 0.16, h: 0.075, w: 0.096, cab: [0.095, 0.038, 0.005] },
-    'PICKUP':     { l: 0.19, h: 0.058, w: 0.095, cab: null },
-    'VAN':        { l: 0.17, h: 0.082, w: 0.096, cab: null }
+    'COMPACT':    { l: 0.15, h: 0.063, w: 0.098, cab: [0.071, 0.039, 0.0] },
+    'SEDAN':      { l: 0.21, h: 0.055, w: 0.104, cab: [0.094, 0.039, -0.014] },
+    'SPORTS CAR': { l: 0.2,  h: 0.041, w: 0.104, cab: [0.081, 0.03, -0.023] },
+    'SUV':        { l: 0.18, h: 0.086, w: 0.11,  cab: [0.109, 0.044, 0.006] },
+    'PICKUP':     { l: 0.22, h: 0.067, w: 0.109, cab: null },
+    'VAN':        { l: 0.2,  h: 0.094, w: 0.11,  cab: null }
   };
 
   function buildVehicle(veh) {
@@ -3299,13 +3381,31 @@ var Renderer = (() => {
         g.add(cab);
       }
     }
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.3, 8, 1, true),
+    // contact shadow grounds the car on the asphalt
+    const shadow = new THREE.Mesh(new THREE.CircleGeometry(d.l * 0.62, 12),
+      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false }));
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.004;
+    shadow.scale.z = 0.62;
+    g.add(shadow);
+    // lit headlights and taillights read direction of travel instantly
+    const hlMat = new THREE.MeshBasicMaterial({ color: 0xffe9b0 });
+    const tlMat = new THREE.MeshBasicMaterial({ color: 0xc2483c });
+    for (const s of [-1, 1]) {
+      const hl = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.014, 0.02), hlMat);
+      hl.position.set(d.l / 2, d.h * 0.55, s * d.w * 0.3);
+      g.add(hl);
+      const tl = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.012, 0.018), tlMat);
+      tl.position.set(-d.l / 2, d.h * 0.55, s * d.w * 0.3);
+      g.add(tl);
+    }
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.34, 8, 1, true),
       new THREE.MeshBasicMaterial({
-        color: V.HEADLIGHT, transparent: true, opacity: 0.16,
+        color: V.HEADLIGHT, transparent: true, opacity: 0.18,
         blending: THREE.AdditiveBlending, depthWrite: false
       }));
     cone.rotation.z = Math.PI / 2;
-    cone.position.set(d.l * 0.5 + 0.14, 0.04, 0);
+    cone.position.set(d.l * 0.5 + 0.16, 0.04, 0);
     g.add(cone);
     g.userData = { kind: 'vehicle', id: veh.id };
     return g;
@@ -3343,16 +3443,68 @@ var Renderer = (() => {
   function buildVandal(v) {
     const g = new THREE.Group();
     const col = v.type === 'SCRAPPER' ? V.SCRAPPER : v.type === 'TAGGER' ? V.TAGGER : V.FIXER;
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 0.14, 8),
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.072, 0.17, 8),
       new THREE.MeshLambertMaterial({ color: col }));
-    body.position.y = 0.07;
+    body.position.y = 0.085;
     g.add(body);
-    const hood = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6),
+    const hood = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6),
       new THREE.MeshLambertMaterial({ color: col }));
-    hood.position.y = 0.16;
+    hood.position.y = 0.19;
     g.add(hood);
+    const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.08, 10),
+      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3, depthWrite: false }));
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.004;
+    g.add(shadow);
+    // trouble light: red dot overhead, shown only while acting
+    const alert = new THREE.Mesh(new THREE.SphereGeometry(0.03, 6, 5),
+      new THREE.MeshBasicMaterial({ color: V.RED }));
+    alert.position.y = 0.32;
+    alert.visible = false;
+    alert.userData.alert = true;
+    g.add(alert);
     g.userData = { kind: 'vandal', id: v.id };
     return g;
+  }
+
+  // Persistent scene markers: every open case keeps a diamond at its
+  // crime scene, so tips and cards stay connected to the geography.
+  // Contested cases pulse amber; vandal scenes are cyan.
+  function syncCaseMarkers(state) {
+    const live = new Set();
+    for (const kase of state.cases) {
+      if (kase.status !== 'OPEN' && kase.status !== 'CONTESTED') continue;
+      live.add(kase.id);
+      let m = caseMarkers.get(kase.id);
+      if (!m) {
+        const color = kase.type === 'VANDAL' ? V.CYAN : V.GOLD;
+        const g = new THREE.Group();
+        const d = new THREE.Mesh(new THREE.CircleGeometry(0.1, 4),
+          new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, side: THREE.DoubleSide }));
+        d.rotation.x = -Math.PI / 2;
+        d.rotation.z = Math.PI / 4;
+        d.position.y = 0.045;
+        g.add(d);
+        const ring = new THREE.Mesh(new THREE.RingGeometry(0.16, 0.19, 20),
+          new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.4, side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending, depthWrite: false }));
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.y = 0.04;
+        g.add(ring);
+        const p = nodePos(state.map, kase.spawnNode);
+        g.position.set(p.x, 0, p.z);
+        caseGroup.add(g);
+        caseMarkers.set(kase.id, g);
+        m = g;
+      }
+      // contested pulses; open breathes gently
+      const k = kase.status === 'CONTESTED' ? 0.25 : 0.08;
+      const s = 1 + k * Math.sin(clockMs / (kase.status === 'CONTESTED' ? 180 : 420));
+      m.scale.setScalar(s);
+    }
+    for (const [id, m] of caseMarkers) {
+      if (!live.has(id)) { caseGroup.remove(m); caseMarkers.delete(id); }
+    }
   }
 
   function syncVandals(state) {
@@ -3374,8 +3526,11 @@ var Renderer = (() => {
       let m = vandalMeshes.get(v.id);
       if (!m) { m = buildVandal(v); vandalGroup.add(m); vandalMeshes.set(v.id, m); }
       m.position.set(node.x - 0.15, 0, node.z - 0.15);
-      // acting: bob
+      // acting: bob + the trouble light blinks
       if (v.state === 'ACT') m.position.y = Math.abs(Math.sin(clockMs / 130)) * 0.03;
+      m.traverse(o => {
+        if (o.userData.alert) o.visible = v.state === 'ACT' && Math.floor(clockMs / 300) % 2 === 0;
+      });
     }
     for (const [id, m] of vandalMeshes) {
       if (!live.has(id)) { vandalGroup.remove(m); vandalMeshes.delete(id); }
@@ -3706,13 +3861,14 @@ var Renderer = (() => {
 
   function setMatch(state) {
     curState = state;
-    for (const grp of [camGroup, vehGroup, vandalGroup, fxGroup, overlayGroup]) {
+    for (const grp of [camGroup, vehGroup, vandalGroup, fxGroup, overlayGroup, caseGroup]) {
       if (grp) scene.remove(grp);
     }
-    camMeshes.clear(); vehMeshes.clear(); vandalMeshes.clear(); fx.length = 0;
+    camMeshes.clear(); vehMeshes.clear(); vandalMeshes.clear(); caseMarkers.clear(); fx.length = 0;
     camGroup = new THREE.Group(); vehGroup = new THREE.Group();
     vandalGroup = new THREE.Group(); fxGroup = new THREE.Group(); overlayGroup = new THREE.Group();
-    scene.add(camGroup, vehGroup, vandalGroup, fxGroup, overlayGroup);
+    caseGroup = new THREE.Group();
+    scene.add(camGroup, vehGroup, vandalGroup, fxGroup, overlayGroup, caseGroup);
     buildCity(state);
     view = { cx: (state.map.W - 1) / 2, cz: (state.map.H - 1) / 2, zoom: 12.5 };
     applyView();
@@ -3736,6 +3892,7 @@ var Renderer = (() => {
     syncCameras(state);
     syncVehicles(state);
     syncVandals(state);
+    syncCaseMarkers(state);
 
     // fx aging
     for (let i = fx.length - 1; i >= 0; i--) {
@@ -3794,6 +3951,14 @@ var Renderer = (() => {
     setSelected: (n) => setSelected(curState, n),
     setTutorialRing: (n) => setTutorialRing(curState, n),
     markOverlayDirty,
+    // tap a camera and its whole sightline lights for a beat — the
+    // fastest way to teach what one unit actually holds
+    flashSightline: (camId) => {
+      if (!curState) return;
+      const cam = curState.cameras.find(c => c.id === camId);
+      if (!cam) return;
+      for (const e of cam.sight) segFlash(curState, e.seg, V.TEAL, 0.9, 0.4);
+    },
     getView: () => view
   };
 })();
@@ -4608,6 +4773,7 @@ var UI = (() => {
         : cam.drive.length + ' unsent · uploads in ' + Math.max(0, Math.ceil(CONFIG.Retention.UPLOAD_INTERVAL - (state.time - cam.lastUpload))) + 's';
       const aim = Sightlines.aimLabel(cam.type, cam.dir);
       identity('CYCLOPS ' + cam.type + (aim ? ' · WATCHING ' + aim : '') + ' — ' + cond + ' · ' + link + (cam.hardened ? ' · HARDENED' : ''));
+      Renderer.flashSightline(cam.id);   // show exactly what this unit holds
     } else if (pick.kind === 'vandal') {
       const v = state.vandals.find(x => x.id === pick.id);
       if (!v) return;

@@ -804,6 +804,7 @@ var UI = (() => {
         : cam.drive.length + ' unsent · uploads in ' + Math.max(0, Math.ceil(CONFIG.Retention.UPLOAD_INTERVAL - (state.time - cam.lastUpload))) + 's';
       const aim = Sightlines.aimLabel(cam.type, cam.dir);
       identity('CYCLOPS ' + cam.type + (aim ? ' · WATCHING ' + aim : '') + ' — ' + cond + ' · ' + link + (cam.hardened ? ' · HARDENED' : ''));
+      Renderer.flashSightline(cam.id);   // show exactly what this unit holds
     } else if (pick.kind === 'vandal') {
       const v = state.vandals.find(x => x.id === pick.id);
       if (!v) return;
