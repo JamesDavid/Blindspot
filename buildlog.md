@@ -41,3 +41,7 @@ A running record kept during the build. Prompt-built with an AI coding agent
 **Problems & fixes this session:** (1) auto-closures at STRICT bar were a false-charge factory — oblique reads sat at conf 74 vs CLARITY 75; misattachment now scales with ambiguity and stays near the crime scene. (2) The signature sequence failed because the syndicate case closed *before* shift 5 — syndicate jobs now land late in their shift. (3) Events were cleared at tick start, wiping everything actions emitted between ticks — replaced with a seq-cursor ring every consumer reads independently.
 
 **Where things stand:** headless game complete and tuned to a first playable band; next: renderer/UI (files 16+), then tutorial/demo/save wiring, Playwright tests, sweeps, GA.
+
+| # | Prompt (summary) | Commit | Result |
+|---|---|---|---|
+| 5 | (milestone 5: DOM layer) | `58a051d` | Audio synth, night-city renderer (coverage overlay recolours board-wide with the dial), tap-first UI (menu columns EYES·UPLINK·WORKS·DIAL, quality pill, identity pills, contested cards), tutorial with pointing hand, WATCH A SHIFT demo driving the real UI, main loop with dt clamp + save-on-hide. Live smoke in a real browser: zero page errors; place flow, dial, ghost pill all verified on screenshots. Fixed: HUD stacked above title overlay. |
