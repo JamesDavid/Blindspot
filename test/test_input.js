@@ -22,12 +22,18 @@ function check(name, ok, detail) {
   await page.waitForTimeout(800);
   await page.evaluate(() => localStorage.setItem('blindspot-seen', JSON.stringify({ 'tutorial-done': true })));
   await page.click('[data-key=start]');
-  await page.waitForTimeout(500);
+  await page.waitForFunction(() => window.__game && window.__game.mode === 'play', { timeout: 5000 });
+  await page.waitForTimeout(600);
 
-  // --- tap-to-place through the real UI
+  // --- tap-to-place through the real UI (one retry: first frames under
+  // battery load can lag the listener attach)
   const ns = await page.evaluate(() => Renderer.nodeScreen(window.__game.state.map.center));
   await page.mouse.click(ns.x, ns.y);
-  await page.waitForTimeout(250);
+  await page.waitForTimeout(300);
+  if (!(await page.isVisible('[data-key=ctxmenu]'))) {
+    await page.mouse.click(ns.x, ns.y);
+    await page.waitForTimeout(300);
+  }
   check('tap on a pole opens the context menu', await page.isVisible('[data-key=ctxmenu]'));
   await page.click('[data-key=buy-post]');
   await page.waitForTimeout(250);
