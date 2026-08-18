@@ -322,11 +322,11 @@ var Renderer = (() => {
     const addDistrictLabel = (nodeIdx, text, dz) => {
       if (nodeIdx === undefined || nodeIdx < 0) return;
       const n = map.nodes[nodeIdx];
-      const sp = textSprite(text, '#7d8798', 'rgba(8,10,14,0.72)');
+      const sp = textSprite(text, '#7d8798', 'rgba(8,10,14,0.72)', true);
       // a name-tag, not a world object: always legible over rings/markers
       sp.material.depthTest = false;
       sp.renderOrder = 5;
-      sp.scale.set(0.62, 0.17, 1);
+      sp.scale.set(0.17 * sp.userData.aspect, 0.17, 1); // constant height, width to fit
       sp.position.set(n.x, 0.42, n.y + (dz || 0));
       mapGroup.add(sp);
     };
@@ -454,20 +454,25 @@ var Renderer = (() => {
     return t;
   }
 
-  function textSprite(text, color, bg) {
+  function textSprite(text, color, bg, fit) {
     const c = document.createElement('canvas');
-    c.width = 128; c.height = 40;
     const g = c.getContext('2d');
-    if (bg) { g.fillStyle = bg; g.fillRect(0, 0, 128, 40); }
     g.font = 'bold 22px monospace';
+    // fit: size the canvas to the text so long names never truncate
+    // (a fixed 128px canvas clipped "SYNDICATE BLOCK" to "NDICATE BLO")
+    c.width = fit ? Math.max(64, Math.ceil(g.measureText(text).width) + 18) : 128;
+    c.height = 40;
+    if (bg) { g.fillStyle = bg; g.fillRect(0, 0, c.width, 40); }
+    g.font = 'bold 22px monospace'; // resizing the canvas resets the context
     g.textAlign = 'center'; g.textBaseline = 'middle';
     g.fillStyle = color;
-    g.fillText(text, 64, 21);
+    g.fillText(text, c.width / 2, 21);
     const t = new THREE.CanvasTexture(c);
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({
       map: t, transparent: true, depthWrite: false
     }));
     sp.scale.set(1.15, 0.36, 1);
+    sp.userData.aspect = c.width / c.height;
     return sp;
   }
 
