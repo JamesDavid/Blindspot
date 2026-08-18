@@ -1097,12 +1097,23 @@ var Renderer = (() => {
       }
     });
     ghost.add(mesh);
-    // preview the sightline
+    // preview the sightline — same literal geometry as the placed overlay:
+    // cross-streets show only the junction stub the ray reaches, so the
+    // ghost never promises more street than the camera will watch
     const entries = Sightlines.compute(state.map, nodeIdx, type, dir || 0);
+    const gc = state.map.nodes[nodeIdx];
     for (const e of entries) {
       const s = state.map.segs[e.seg];
       const a = nodePos(state.map, s.a), b = nodePos(state.map, s.b);
-      const len = Math.abs(a.x - b.x) + Math.abs(a.z - b.z);
+      let f0 = 0, f1 = 1;
+      if (e.oblique) {
+        const na = state.map.nodes[s.a], nb = state.map.nodes[s.b];
+        const da = Math.abs(na.x - gc.x) + Math.abs(na.y - gc.y);
+        const db = Math.abs(nb.x - gc.x) + Math.abs(nb.y - gc.y);
+        if (da <= db) f1 = 0.3; else f0 = 0.7;
+      }
+      const len = (Math.abs(a.x - b.x) + Math.abs(a.z - b.z)) * (f1 - f0);
+      const mx = a.x + (b.x - a.x) * (f0 + f1) / 2, mz = a.z + (b.z - a.z) * (f0 + f1) / 2;
       const conf = Sightlines.baseConfidence(state.map, e, type);
       const mat = new THREE.MeshBasicMaterial({
         color: conf >= state.threshold ? V.GHOST_OK : V.GHOST_BAD,
@@ -1110,7 +1121,7 @@ var Renderer = (() => {
       });
       const m = new THREE.Mesh(new THREE.BoxGeometry(
         s.dir === 'H' ? len : 0.4, 0.004, s.dir === 'H' ? 0.4 : len), mat);
-      m.position.set((a.x + b.x) / 2, 0.045, (a.z + b.z) / 2);
+      m.position.set(mx, 0.045, mz);
       ghost.add(m);
     }
     scene.add(ghost);

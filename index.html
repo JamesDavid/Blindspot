@@ -22,7 +22,7 @@
 <script>
 'use strict';
 /* BLIND SPOT — a camera-network tower defense prototype. */
-window.BUILDSTAMP = 'BUILD 2026-08-18 16:36 UTC';
+window.BUILDSTAMP = 'BUILD 2026-08-18 16:43 UTC';
 
 // ============================================================
 // CONFIG
@@ -1599,10 +1599,36 @@ var CaseSystem = (() => {
   };
   const TIP_VERBS = {
     'BANK ROBBERY': 'rob', 'OFFICE BURGLARY': 'hit', 'ARMED ROBBERY': 'hold up',
-    'SHOPLIFTING': 'run from', 'MUGGING': 'flee', 'BREAK-IN': 'leave',
+    'SHOPLIFTING': 'run from', 'MUGGING': 'flee', 'BREAK-IN': 'flee',
     'CAR THEFT': 'boost a car near', 'SHAKEDOWN': 'work', 'PURSE SNATCHING': 'strike at',
     'SMASH-AND-GRAB': 'hit', 'SYNDICATE HEIST': 'clean out'
   };
+
+  // One scene pool per residential/commercial district, cached per map;
+  // the district is drawn evenly first so no district's node count can
+  // dominate the tip line.
+  function pettyScene(state, rng) {
+    const map = state.map;
+    if (!map._pettyScenes) {
+      const pools = { HOUSES: [], APARTMENTS: [], DOWNTOWN: [] };
+      for (const n of map.nodes) {
+        if (n.exit || !map.adj[n.id] || map.adj[n.id].length < 2) continue;
+        if (map.distToExit[n.id] < CONFIG.MapGen.MIN_ESCAPE_SEGMENTS) continue;
+        const d = map.districts[n.id];
+        if (pools[d]) pools[d].push(n.id);
+      }
+      map._pettyScenes = pools;
+    }
+    const order = ['HOUSES', 'APARTMENTS', 'DOWNTOWN'];
+    const weights = order.map(d => map._pettyScenes[d].length ? 1 : 0);
+    const district = order[weightedIndex(weights, rng())];
+    const pool = map._pettyScenes[district];
+    if (!pool || !pool.length) {
+      const zones = map.spawnZones;
+      return zones[Math.floor(rng() * zones.length)];
+    }
+    return pool[Math.floor(rng() * pool.length)];
+  }
 
   function openCrime(state, type) {
     const rng = () => State.rngNext(state, 'crimes');
@@ -1618,8 +1644,12 @@ var CaseSystem = (() => {
       spawnNode = state.map.poi[pick[0]];
       kind = pick[1]; landmark = pick[2];
     } else {
-      const zones = state.map.spawnZones;
-      spawnNode = zones[Math.floor(rng() * zones.length)];
+      // Petty scenes happen where people live and shop — spread across the
+      // named districts (player-directed: leaving the row houses is not a
+      // crime, and the tip line was all row houses because scenes were
+      // drawn from spawn zones, which skew to the outer ring). Never so
+      // close to an exit that the getaway leaves no track.
+      spawnNode = pettyScene(state, rng);
       const district = state.map.districts[spawnNode] || 'HOUSES';
       const k = PETTY_KINDS[district] || ['THEFT', 'THE ' + district];
       kind = k[0]; landmark = k[1];
@@ -3053,6 +3083,18 @@ var GameAudio = (() => {
   }
 
   function setMuted(m) { muted = m; if (ambientMute) ambientMute.gain.value = m ? 0 : 1; }
+
+  // Backgrounding a mobile tab suspends WebAudio, and iOS can park the
+  // context 'interrupted' with no self-recovery. Returning to the tab
+  // retries a resume, and the first touch after returning always works
+  // (a user gesture may resume contexts that a visibility event cannot).
+  if (typeof document !== 'undefined') {
+    const revive = () => { if (ctx && ctx.state !== 'running') { try { ctx.resume(); } catch (e) {} } };
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) revive(); });
+    window.addEventListener('pageshow', revive);
+    window.addEventListener('focus', revive);
+    document.addEventListener('pointerdown', revive, { passive: true });
+  }
   return { unlock, onEvents, sounds: S, setMuted };
 })();
 
@@ -4159,12 +4201,23 @@ var Renderer = (() => {
       }
     });
     ghost.add(mesh);
-    // preview the sightline
+    // preview the sightline — same literal geometry as the placed overlay:
+    // cross-streets show only the junction stub the ray reaches, so the
+    // ghost never promises more street than the camera will watch
     const entries = Sightlines.compute(state.map, nodeIdx, type, dir || 0);
+    const gc = state.map.nodes[nodeIdx];
     for (const e of entries) {
       const s = state.map.segs[e.seg];
       const a = nodePos(state.map, s.a), b = nodePos(state.map, s.b);
-      const len = Math.abs(a.x - b.x) + Math.abs(a.z - b.z);
+      let f0 = 0, f1 = 1;
+      if (e.oblique) {
+        const na = state.map.nodes[s.a], nb = state.map.nodes[s.b];
+        const da = Math.abs(na.x - gc.x) + Math.abs(na.y - gc.y);
+        const db = Math.abs(nb.x - gc.x) + Math.abs(nb.y - gc.y);
+        if (da <= db) f1 = 0.3; else f0 = 0.7;
+      }
+      const len = (Math.abs(a.x - b.x) + Math.abs(a.z - b.z)) * (f1 - f0);
+      const mx = a.x + (b.x - a.x) * (f0 + f1) / 2, mz = a.z + (b.z - a.z) * (f0 + f1) / 2;
       const conf = Sightlines.baseConfidence(state.map, e, type);
       const mat = new THREE.MeshBasicMaterial({
         color: conf >= state.threshold ? V.GHOST_OK : V.GHOST_BAD,
@@ -4172,7 +4225,7 @@ var Renderer = (() => {
       });
       const m = new THREE.Mesh(new THREE.BoxGeometry(
         s.dir === 'H' ? len : 0.4, 0.004, s.dir === 'H' ? 0.4 : len), mat);
-      m.position.set((a.x + b.x) / 2, 0.045, (a.z + b.z) / 2);
+      m.position.set(mx, 0.045, mz);
       ghost.add(m);
     }
     scene.add(ghost);
