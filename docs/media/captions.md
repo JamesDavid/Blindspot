@@ -10,3 +10,4 @@
 8. `08_rain` — Rain. Same bar, fewer clean reads — the streets go red until you move the dial.
 9. `09_verdict` — The warrant lands. Every match ends with a weighed verdict — and you can refuse the ruling.
 10. `10_demo` — WATCH A SHIFT: an evolved champion plays the real menus, and wins.
+11. `11_casefile` — The case file: a still for every read. One of these cars is not like the others.

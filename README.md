@@ -67,11 +67,11 @@ The bar is global, always visible, and always felt: every read flashes gold when
 
 <img src="docs/05_reads.png" width="300"> <img src="docs/08_rain.png" width="300">
 
-### 4. Cases, coherence, and the contested card *(done)*
+### 4. Cases, coherence, and the case file *(done — player-directed)*
 
-Three corroborating reads on a route consistent with one vehicle's travel close a case. Contradictions never close silently — they surface a card you must CHARGE or RELEASE, holding enough to reason with and never enough to be sure. Charging the wrong plate still pays (the short-term incentive points the wrong way on purpose); trust is what corrects you. Unanswered cards auto-release at expiry — no prompt can softlock. `test_coherence.js` proves the invariants headlessly on every build.
+Three corroborating reads on a route consistent with one vehicle's travel make an arrest; the file must then survive to trial. Contradictions never resolve silently — they surface a card you must CHARGE or RELEASE. Tap the card and the **case file opens: a synthetic camera still for every read**, drawn procedurally from what was genuinely photographed — the actual car in its actual colour, the plate as the OCR took it with characters smudged in proportion to confidence, rain streaks, lens-grime smears, heading arrows, and ⚠ cross-references between frames that cannot be the same vehicle. Compare each frame against the best one: a murky tan car heading west in a file full of crisp green cars heading north is your informed reason to release — and because misattached reads are always low-confidence, the murk *is* the uncertainty; the file never tells you outright. Charging the wrong plate still pays (the incentive points the wrong way on purpose); trust is what corrects you. Unanswered cards auto-release at expiry. `test_coherence.js` proves the invariants headlessly on every build.
 
-<img src="docs/06_contested.png" width="300">
+<img src="docs/06_contested.png" width="300"> <img src="docs/11_casefile.png" width="300">
 
 ### 5. Evidence that dies twice *(done)*
 
