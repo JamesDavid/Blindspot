@@ -22,7 +22,7 @@
 <script>
 'use strict';
 /* BLIND SPOT — a camera-network tower defense prototype. */
-window.BUILDSTAMP = 'BUILD 2026-08-18 03:24 UTC';
+window.BUILDSTAMP = 'BUILD 2026-08-18 03:30 UTC';
 
 // ============================================================
 // CONFIG
@@ -3927,6 +3927,11 @@ var UI = (() => {
 .evmeta .ref { color:#39d3c0; font-weight:700; }
 .evgrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
 .evcell { border-radius:8px; }
+.evcell.inactive { opacity:0.55; }
+.evmap { margin-bottom:8px; }
+.evmap canvas { display:block; width:100%; border-radius:8px; background:#0a0c11; }
+.evlegs { font-size:8.5px; color:#8b93a5; margin:3px 0 6px; line-height:1.5; }
+.evlegs .bad { color:#ff8a80; font-weight:700; }
 .evhint { font-size:9.5px; color:#8b93a5; text-align:center; margin:2px 0 8px; line-height:1.5; }
 .evverdict { display:flex; gap:8px; }
 .evverdict button { flex:1; padding:11px 0; border:none; border-radius:9px; font-size:13px;
@@ -4361,10 +4366,110 @@ var UI = (() => {
 
   const HEADINGS = ['→ EAST', '↓ SOUTH', '← WEST', '↑ NORTH'];
 
+  // Every read the file ever held — the sheet shows the WHOLE story,
+  // including footage that aged off, died with its pole, or is still
+  // sitting unsent on a drive.
+  function allEvidence(kase) {
+    return state.reads.filter(r => r.caseId === kase.id).sort((a, b) => a.t - b.t);
+  }
+  function readStatus(r) {
+    if (r.lost) return ['LOST WITH POLE', '#ff8a80'];
+    if (r.uploadedAt === null) return ['ON THE POLE — UNSENT', '#ffb44a'];
+    if (state.time >= r.expiresAt) return ['AGED OFF', '#8b93a5'];
+    return null;   // active
+  }
+
+  // The sightings map: where each frame was taken, in time order, with
+  // the legs between them — and a named problem when a leg is impossible
+  // ("9 blocks in 3s: nothing drives that fast").
+  function drawCaseMap(cv, kase, ev) {
+    const g = cv.getContext('2d');
+    const map = state.map, W = cv.width, H = cv.height, m = 26;
+    g.fillStyle = '#0a0c11'; g.fillRect(0, 0, W, H);
+    // zoom to the case's own neighbourhood: scene + every sighting, padded
+    const involved = [kase.spawnNode, ...ev.map(r => r.camNode)];
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const n of involved) {
+      const nd = map.nodes[n];
+      x0 = Math.min(x0, nd.x); x1 = Math.max(x1, nd.x);
+      y0 = Math.min(y0, nd.y); y1 = Math.max(y1, nd.y);
+    }
+    x0 = Math.max(0, x0 - 2); x1 = Math.min(map.W - 1, x1 + 2);
+    y0 = Math.max(0, y0 - 2); y1 = Math.min(map.H - 1, y1 + 2);
+    const scale = Math.min((W - 2 * m) / Math.max(2, x1 - x0), (H - 2 * m) / Math.max(2, y1 - y0), 90);
+    const ox = (W - (x1 - x0) * scale) / 2 - x0 * scale, oy = (H - (y1 - y0) * scale) / 2 - y0 * scale;
+    const px = (n) => ox + map.nodes[n].x * scale, py = (n) => oy + map.nodes[n].y * scale;
+    g.save();
+    g.beginPath(); g.rect(0, 0, W, H); g.clip();
+    // streets
+    g.strokeStyle = '#242a36'; g.lineWidth = 2;
+    for (const s of map.segs) {
+      g.beginPath(); g.moveTo(px(s.a), py(s.a)); g.lineTo(px(s.b), py(s.b)); g.stroke();
+    }
+    // the scene
+    g.save();
+    g.translate(px(kase.spawnNode), py(kase.spawnNode));
+    g.rotate(Math.PI / 4);
+    g.fillStyle = '#ff5a52';
+    g.fillRect(-7, -7, 14, 14);
+    g.restore();
+    // legs between consecutive sightings — impossible legs paint LAST so
+    // a clean return leg on the same street can never hide them
+    for (const pass of [true, false]) {
+      for (let i = 1; i < ev.length; i++) {
+        const a = ev[i - 1], b = ev[i];
+        const ok = CaseSystem.pairCoherent(state, a, b);
+        if (ok !== pass) continue;
+        g.strokeStyle = ok ? 'rgba(57,211,192,0.75)' : 'rgba(255,90,82,0.95)';
+        g.lineWidth = ok ? 3 : 4;
+        g.setLineDash(ok ? [] : [7, 6]);
+        g.beginPath(); g.moveTo(px(a.camNode), py(a.camNode)); g.lineTo(px(b.camNode), py(b.camNode)); g.stroke();
+        g.setLineDash([]);
+      }
+    }
+    // numbered sightings (jitter repeats at the same pole so both show)
+    g.font = 'bold 13px monospace'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    const seenAt = {};
+    ev.forEach((r, i) => {
+      const k = r.camNode;
+      const jit = (seenAt[k] || 0) * 9;
+      seenAt[k] = (seenAt[k] || 0) + 1;
+      const x = px(k) + jit, y = py(k) - jit;
+      const st = readStatus(r);
+      g.fillStyle = st ? '#5a6070' : '#ffc84a';
+      g.beginPath(); g.arc(x, y, 10, 0, 7); g.fill();
+      g.fillStyle = '#0b0d12';
+      g.fillText(String(i + 1), x, y + 1);
+    });
+    g.restore();
+    // legend
+    g.fillStyle = 'rgba(10,12,17,0.8)'; g.fillRect(2, 2, 170, 52);
+    g.font = '11px monospace'; g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+    g.fillStyle = '#ff5a52'; g.fillText('◆ scene', 8, 16);
+    g.fillStyle = '#ffc84a'; g.fillText('● sighting (in order)', 8, 32);
+    g.fillStyle = 'rgba(255,90,82,0.9)'; g.fillText('┅ impossible leg', 8, 48);
+  }
+
+  function legDiagnostics(ev) {
+    const out = [];
+    let clean = 0;
+    for (let i = 1; i < ev.length; i++) {
+      const a = ev[i - 1], b = ev[i];
+      if (CaseSystem.pairCoherent(state, a, b)) { clean++; continue; }
+      const dd = CaseSystem.nodeDist(state, a.camNode, b.camNode);
+      const dt = Math.max(0.1, b.t - a.t);
+      out.push(`<span class="bad">⚠ #${i} → #${i + 1}: ${dd} blocks in ${dt < 10 ? dt.toFixed(1) : Math.round(dt)}s — nothing drives that fast. One of these frames is someone else.</span>`);
+    }
+    if (ev.length >= 2 && out.length === 0) out.push(`${clean} leg${clean === 1 ? '' : 's'}, all drivable — the route holds together.`);
+    return out.join('<br>');
+  }
+
   function stillMeta(read, idx, refId, conflicts, idxOf) {
     const bits = [];
     if (read.id === refId) bits.push('<span class="ref">BEST FRAME #' + idx + '</span>');
     else bits.push('#' + idx);
+    const st = readStatus(read);
+    if (st) bits.push(`<span style="color:${st[1]};font-weight:700">${st[0]}</span>`);
     bits.push('CONF ' + read.conf);
     bits.push(fmtTime(read.t));
     bits.push('CAM ' + read.camId + (read.camTags > 0 ? ' · <span class="warn">LENS FOULED</span>' : ''));
@@ -4382,9 +4487,11 @@ var UI = (() => {
     const kase = CaseSystem.byId(state, caseId);
     if (!kase || kase.status !== 'CONTESTED') return;
     evsheetCaseId = caseId;
-    const ev = CaseSystem.usableEvidence(state, kase).sort((a, b) => a.t - b.t);
+    const ev = allEvidence(kase);           // the WHOLE file, aged and lost included
+    const active = ev.filter(r => !readStatus(r));
     const pairs = CaseSystem.contradictionPairs(state, ev);
-    const refId = ev.length ? ev.reduce((m, r) => r.conf > m.conf ? r : m, ev[0]).id : -1;
+    const refPool = active.length ? active : ev;
+    const refId = refPool.length ? refPool.reduce((m, r) => r.conf > m.conf ? r : m, refPool[0]).id : -1;
     const idxOf = {};
     ev.forEach((r, i) => { idxOf[r.id] = i + 1; });
 
@@ -4392,9 +4499,24 @@ var UI = (() => {
     sheet.setAttribute('data-key', 'evsheet');
     const c = kase.contested || {};
     sheet.innerHTML = `<div class="evhead"><b>CASE FILE — ${kase.plate}</b>
-      <span>${kase.kind || kase.type} at ${kase.landmark || 'the scene'} · ${ev.length} read${ev.length === 1 ? '' : 's'} · ${c.contradiction ? 'contradiction' : 'near the bar'} · cold in ${Math.max(0, Math.ceil(kase.coldAt - state.time))}s</span>
+      <span>${kase.kind || kase.type} at ${kase.landmark || 'the scene'} · ${ev.length} frame${ev.length === 1 ? '' : 's'}${active.length !== ev.length ? ' (' + active.length + ' usable)' : ''} · ${c.contradiction ? 'contradiction' : 'near the bar'} · cold in ${Math.max(0, Math.ceil(kase.coldAt - state.time))}s</span>
       <button data-key="ev-close">✕</button></div>
       ${kase.witnessDesc ? `<div class="evhint" style="margin:0 0 8px"><span style="color:#ffc84a;font-weight:700">WITNESS: "a ${kase.witnessDesc}"</span> — does every frame match?</div>` : ''}`;
+
+    // the sightings map: scene, numbered frames in time order, and the
+    // legs between them — impossible legs drawn dashed red and named
+    if (ev.length) {
+      const mapWrap = h('div', 'evmap');
+      const mcv = document.createElement('canvas');
+      mcv.width = 720; mcv.height = 440;
+      drawCaseMap(mcv, kase, ev);
+      mapWrap.appendChild(mcv);
+      mapWrap.setAttribute('data-key', 'evmap');
+      sheet.appendChild(mapWrap);
+      const legs = h('div', 'evlegs');
+      legs.innerHTML = legDiagnostics(ev);
+      sheet.appendChild(legs);
+    }
 
     // reference frame, big
     const ref = ev.find(r => r.id === refId);
@@ -4414,7 +4536,7 @@ var UI = (() => {
     // every frame in time order
     const grid = h('div', 'evgrid');
     ev.forEach((r, i) => {
-      const cell = h('div', 'evcell');
+      const cell = h('div', 'evcell' + (readStatus(r) ? ' inactive' : ''));
       cell.setAttribute('data-key', 'ev-still-' + (i + 1));
       const cv = document.createElement('canvas');
       cv.width = 352; cv.height = 200;
