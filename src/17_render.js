@@ -621,17 +621,34 @@ var Renderer = (() => {
     overlayDirty = false;
     while (overlayGroup.children.length) overlayGroup.remove(overlayGroup.children[0]);
     const map = state.map;
-    const seen = new Map(); // segId -> best live conf
+    // Literal coverage: a street collinear with the pole is watched its
+    // whole length; cross-traffic is only ever photographed inside the
+    // junction box the sight ray reaches. An oblique-only street gets a
+    // short stub at that junction — the tint never claims mid-block sight
+    // through a building row (it matches what the lens can show).
+    const seen = new Map(); // segId -> best live conf per geometry
     for (const cam of state.cameras) {
       for (const e of cam.sight) {
         const conf = Sightlines.liveConfidence(state, cam, e);
-        if (!seen.has(e.seg) || seen.get(e.seg) < conf) seen.set(e.seg, conf);
+        let rec = seen.get(e.seg);
+        if (!rec) { rec = { full: -1, endA: -1, endB: -1 }; seen.set(e.seg, rec); }
+        if (!e.oblique) { if (conf > rec.full) rec.full = conf; }
+        else {
+          const s = map.segs[e.seg];
+          const na = map.nodes[s.a], nb = map.nodes[s.b], nc = map.nodes[cam.node];
+          const da = Math.abs(na.x - nc.x) + Math.abs(na.y - nc.y);
+          const db = Math.abs(nb.x - nc.x) + Math.abs(nb.y - nc.y);
+          if (da <= db) { if (conf > rec.endA) rec.endA = conf; }
+          else if (conf > rec.endB) rec.endB = conf;
+        }
       }
     }
-    for (const [segId, conf] of seen) {
+    const STUB = 0.3;  // how far past the junction box an oblique tint reaches
+    const draw = (segId, conf, f0, f1) => {
       const s = map.segs[segId];
       const a = nodePos(map, s.a), b = nodePos(map, s.b);
-      const len = Math.abs(a.x - b.x) + Math.abs(a.z - b.z);
+      const len = (Math.abs(a.x - b.x) + Math.abs(a.z - b.z)) * (f1 - f0);
+      const mx = a.x + (b.x - a.x) * (f0 + f1) / 2, mz = a.z + (b.z - a.z) * (f0 + f1) / 2;
       const color = conf >= state.threshold + 10 ? V.TEAL
         : conf >= state.threshold ? V.AMBER : V.RED;
       const mat = new THREE.MeshBasicMaterial({
@@ -640,15 +657,22 @@ var Renderer = (() => {
       });
       const m = new THREE.Mesh(new THREE.BoxGeometry(
         s.dir === 'H' ? len : 0.5, 0.004, s.dir === 'H' ? 0.5 : len), mat);
-      m.position.set((a.x + b.x) / 2, 0.03, (a.z + b.z) / 2);
+      m.position.set(mx, 0.03, mz);
       overlayGroup.add(m);
-      // a crisp scanline down the covered street: coverage reads at any zoom
+      // a crisp scanline down the covered stretch: coverage reads at any zoom
       const line = new THREE.Mesh(new THREE.BoxGeometry(
         s.dir === 'H' ? len : 0.05, 0.005, s.dir === 'H' ? 0.05 : len),
         new THREE.MeshBasicMaterial({ color, transparent: true, opacity: conf >= state.threshold ? 0.3 : 0.22,
           blending: THREE.AdditiveBlending, depthWrite: false }));
-      line.position.set((a.x + b.x) / 2, 0.035, (a.z + b.z) / 2);
+      line.position.set(mx, 0.035, mz);
       overlayGroup.add(line);
+    };
+    for (const [segId, rec] of seen) {
+      if (rec.full >= 0) draw(segId, Math.max(rec.full, rec.endA, rec.endB), 0, 1);
+      else {
+        if (rec.endA >= 0) draw(segId, rec.endA, 0, STUB);
+        if (rec.endB >= 0) draw(segId, rec.endB, 1 - STUB, 1);
+      }
     }
   }
 

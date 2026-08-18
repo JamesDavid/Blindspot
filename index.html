@@ -22,7 +22,7 @@
 <script>
 'use strict';
 /* BLIND SPOT — a camera-network tower defense prototype. */
-window.BUILDSTAMP = 'BUILD 2026-08-18 16:23 UTC';
+window.BUILDSTAMP = 'BUILD 2026-08-18 16:35 UTC';
 
 // ============================================================
 // CONFIG
@@ -2929,7 +2929,38 @@ var GameAudio = (() => {
   }
 
   function unlock() {
-    if (ensure() && ctx.state === 'suspended') ctx.resume();
+    if (!ensure()) return;
+    if (ctx.state === 'suspended') ctx.resume();
+    startAmbient();
+  }
+
+  // ---------- the city bed: distant traffic, never dead silence ----------
+  // A brown-noise loop through a low-pass (far-off engines, no hiss) with a
+  // slow LFO swell — traffic arrives in waves. Starts on the first gesture
+  // that unlocks audio; the mute toggle gates it like everything else.
+  let ambientSrc = null, ambientMute = null;
+  function startAmbient() {
+    if (!ctx || ambientSrc) return;
+    const dur = 6, len = Math.floor(ctx.sampleRate * dur);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < len; i++) {
+      const w = Math.random() * 2 - 1;
+      last = (last + 0.02 * w) / 1.02;
+      d[i] = last * 3.5;
+    }
+    ambientSrc = ctx.createBufferSource();
+    ambientSrc.buffer = buf; ambientSrc.loop = true;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 260; lp.Q.value = 0.5;
+    const base = ctx.createGain(); base.gain.value = 0.05;
+    const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 0.06;
+    const lfoG = ctx.createGain(); lfoG.gain.value = 0.018;
+    lfo.connect(lfoG); lfoG.connect(base.gain);
+    ambientMute = ctx.createGain(); ambientMute.gain.value = muted ? 0 : 1;
+    ambientSrc.connect(lp); lp.connect(base); base.connect(ambientMute); ambientMute.connect(master);
+    ambientSrc.start(); lfo.start();
   }
 
   function tone(freq, dur, type, gain, slideTo, delay) {
@@ -2987,7 +3018,13 @@ var GameAudio = (() => {
     warrant()     { tone(523, 0.12, 'sine', 0.4); tone(659, 0.12, 'sine', 0.4, null, 0.1); tone(784, 0.2, 'sine', 0.4, null, 0.2); },
     win()         { [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.25, 'triangle', 0.4, null, i * 0.13)); },
     lose()        { [392, 330, 262, 196].forEach((f, i) => tone(f, 0.3, 'triangle', 0.35, null, i * 0.15)); },
-    tick()        { if (!throttled('tick', 90)) tone(1600, 0.02, 'sine', 0.06); }
+    tick()        { if (!throttled('tick', 90)) tone(1600, 0.02, 'sine', 0.06); },
+    // a crime lands: the smash — glass pings over a noise burst and a thud
+    crime()       { if (!throttled('crime', 800)) { noise(0.16, 0.3); tone(2600, 0.08, 'sine', 0.1, 1500, 0.02); tone(3200, 0.1, 'sine', 0.08, 1700, 0.07); tone(75, 0.25, 'sine', 0.34, 50); } },
+    // the tip line: a double ring — brr-brr, amplitude chopped by hand
+    tipRing()     { if (!throttled('tipring', 900)) for (const dly of [0, 0.26]) for (let i = 0; i < 7; i++) tone(1160, 0.02, 'sine', 0.09, null, dly + i * 0.026); },
+    // an arrest: a brief far-off two-tone wail, kept quiet and rare
+    siren()       { if (!throttled('siren', 1600)) for (let i = 0; i < 3; i++) { tone(640, 0.17, 'triangle', 0.11, 900, i * 0.34); tone(900, 0.17, 'triangle', 0.11, 640, i * 0.34 + 0.17); } }
   };
 
   // React to sim events (called with each new batch).
@@ -2996,7 +3033,9 @@ var GameAudio = (() => {
       switch (ev.type) {
         case 'read': ev.qualifying ? S.read() : S.readMiss(); break;
         case 'placed': S.place(); break;
-        case 'arrest': S.contested(); break;
+        case 'crime': S.crime(); break;
+        case 'tip': case 'witnessCase': S.tipRing(); break;
+        case 'arrest': S.siren(); break;
         case 'caseCollapsed': S.cold(); break;
         case 'caseClosed': S.close(); break;
         case 'caseCold': S.cold(); break;
@@ -3013,7 +3052,7 @@ var GameAudio = (() => {
     }
   }
 
-  function setMuted(m) { muted = m; }
+  function setMuted(m) { muted = m; if (ambientMute) ambientMute.gain.value = m ? 0 : 1; }
   return { unlock, onEvents, sounds: S, setMuted };
 })();
 
@@ -3644,17 +3683,34 @@ var Renderer = (() => {
     overlayDirty = false;
     while (overlayGroup.children.length) overlayGroup.remove(overlayGroup.children[0]);
     const map = state.map;
-    const seen = new Map(); // segId -> best live conf
+    // Literal coverage: a street collinear with the pole is watched its
+    // whole length; cross-traffic is only ever photographed inside the
+    // junction box the sight ray reaches. An oblique-only street gets a
+    // short stub at that junction — the tint never claims mid-block sight
+    // through a building row (it matches what the lens can show).
+    const seen = new Map(); // segId -> best live conf per geometry
     for (const cam of state.cameras) {
       for (const e of cam.sight) {
         const conf = Sightlines.liveConfidence(state, cam, e);
-        if (!seen.has(e.seg) || seen.get(e.seg) < conf) seen.set(e.seg, conf);
+        let rec = seen.get(e.seg);
+        if (!rec) { rec = { full: -1, endA: -1, endB: -1 }; seen.set(e.seg, rec); }
+        if (!e.oblique) { if (conf > rec.full) rec.full = conf; }
+        else {
+          const s = map.segs[e.seg];
+          const na = map.nodes[s.a], nb = map.nodes[s.b], nc = map.nodes[cam.node];
+          const da = Math.abs(na.x - nc.x) + Math.abs(na.y - nc.y);
+          const db = Math.abs(nb.x - nc.x) + Math.abs(nb.y - nc.y);
+          if (da <= db) { if (conf > rec.endA) rec.endA = conf; }
+          else if (conf > rec.endB) rec.endB = conf;
+        }
       }
     }
-    for (const [segId, conf] of seen) {
+    const STUB = 0.3;  // how far past the junction box an oblique tint reaches
+    const draw = (segId, conf, f0, f1) => {
       const s = map.segs[segId];
       const a = nodePos(map, s.a), b = nodePos(map, s.b);
-      const len = Math.abs(a.x - b.x) + Math.abs(a.z - b.z);
+      const len = (Math.abs(a.x - b.x) + Math.abs(a.z - b.z)) * (f1 - f0);
+      const mx = a.x + (b.x - a.x) * (f0 + f1) / 2, mz = a.z + (b.z - a.z) * (f0 + f1) / 2;
       const color = conf >= state.threshold + 10 ? V.TEAL
         : conf >= state.threshold ? V.AMBER : V.RED;
       const mat = new THREE.MeshBasicMaterial({
@@ -3663,15 +3719,22 @@ var Renderer = (() => {
       });
       const m = new THREE.Mesh(new THREE.BoxGeometry(
         s.dir === 'H' ? len : 0.5, 0.004, s.dir === 'H' ? 0.5 : len), mat);
-      m.position.set((a.x + b.x) / 2, 0.03, (a.z + b.z) / 2);
+      m.position.set(mx, 0.03, mz);
       overlayGroup.add(m);
-      // a crisp scanline down the covered street: coverage reads at any zoom
+      // a crisp scanline down the covered stretch: coverage reads at any zoom
       const line = new THREE.Mesh(new THREE.BoxGeometry(
         s.dir === 'H' ? len : 0.05, 0.005, s.dir === 'H' ? 0.05 : len),
         new THREE.MeshBasicMaterial({ color, transparent: true, opacity: conf >= state.threshold ? 0.3 : 0.22,
           blending: THREE.AdditiveBlending, depthWrite: false }));
-      line.position.set((a.x + b.x) / 2, 0.035, (a.z + b.z) / 2);
+      line.position.set(mx, 0.035, mz);
       overlayGroup.add(line);
+    };
+    for (const [segId, rec] of seen) {
+      if (rec.full >= 0) draw(segId, Math.max(rec.full, rec.endA, rec.endB), 0, 1);
+      else {
+        if (rec.endA >= 0) draw(segId, rec.endA, 0, STUB);
+        if (rec.endB >= 0) draw(segId, rec.endB, 1 - STUB, 1);
+      }
     }
   }
 
