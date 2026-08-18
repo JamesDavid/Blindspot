@@ -40,6 +40,7 @@ var CONFIG = Object.freeze({
     CONTESTED_PER_SHIFT_MIN: 2,     // spec-authored: enough to matter
     CONTESTED_PER_SHIFT_MAX: 4,     // spec-authored: few enough to stay a judgement call
     STARVATION_GRACE: 12.0,         // spec-authored (§10.4): expiring evidence glows this early
+    COHERENCE_SLACK_SEGS: 1.5,      // judgment-tuned: grace segments in the one-vehicle route check — tighter falsely contradicts same-pole reads
     FALSE_MAJORITY: 2               // judgment-tuned: closing triple with >= this many false reads charges the wrong plate ("two of three were someone else" is legible)
   },
 
@@ -102,6 +103,7 @@ var CONFIG = Object.freeze({
     TRUST_LOSS_FALSE_CHARGE: 12,    // spec-authored
     TRUST_GAIN_CORRECT_RELEASE: 3,  // spec-authored
     TRUST_GAIN_CLEAN_SHIFT: 1,      // judgment-tuned: slow recovery on clean shifts (§15.3 "rises slowly")
+    HIGH_TRUST_AT: 65,              // judgment-tuned: citizen tips arrive above this (§15.3)
     LOW_TRUST_AT: 45,               // spec-authored
     LOW_TRUST_PAYOUT_MULT: 0.7      // spec-authored
   },

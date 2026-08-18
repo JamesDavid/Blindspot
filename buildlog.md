@@ -33,3 +33,5 @@ A running record kept during the build. Prompt-built with an AI coding agent
 
 | # | Prompt (summary) | Commit | Result |
 |---|---|---|---|
+| 1 | "implement the spec, abide by rules and buildlog requirements, repo at each milestone, all steps incl. tuning, evolution, asset creation" | `70ca2d1` | Repo scaffold: build pipeline, vendor lib, log |
+| 2 | (same directive, milestone 2) | `aef11d6` | CONFIG + PRNG utils + validated deterministic mapgen; test_mapgen green: 200/200 seeds converge, 0 fallbacks, golden seed valid |
