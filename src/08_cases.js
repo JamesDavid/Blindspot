@@ -28,10 +28,22 @@ var CaseSystem = (() => {
 
   // Two reads are consistent with one vehicle's travel iff the gap in
   // space is coverable in the gap in time at the fastest road speed,
-  // plus a slack (§8.2). Same camera never contradicts itself.
+  // plus a slack (§8.2). Distance is between the CAR's photographed
+  // positions (the read's street segment), not the poles that shot them —
+  // measuring pole-to-pole fabricated contradictions when two cameras
+  // covered one street from opposite corners (player-directed fix).
+  function segEnds(state, read) {
+    const s = state.map.segs[read.segId];
+    if (!s) { const n = camNode(state, read); return [n, n]; }
+    return [s.a, s.b];
+  }
+
   function pairCoherent(state, r1, r2) {
     const dt = Math.abs(r1.t - r2.t);
-    const dd = nodeDist(state, camNode(state, r1), camNode(state, r2));
+    const [a1, b1] = segEnds(state, r1), [a2, b2] = segEnds(state, r2);
+    const dd = Math.min(
+      nodeDist(state, a1, a2), nodeDist(state, a1, b2),
+      nodeDist(state, b1, a2), nodeDist(state, b1, b2));
     return dd <= dt * Traffic.maxSegPerSec() + CONFIG.Cases.COHERENCE_SLACK_SEGS;
   }
 

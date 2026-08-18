@@ -39,6 +39,9 @@ function check(name, ok, detail) {
   await page.goto('file:///' + path.join(ext, 'index.html').replace(/\\/g, '/'));
   await page.waitForTimeout(1200);
   await page.evaluate(() => localStorage.setItem('blindspot-seen', JSON.stringify({ 'tutorial-done': true })));
+  // pin the seed — the field auto-populates a random one, and an unaimed
+  // POST on an unlucky map once made this check flaky
+  await page.fill('[data-key=seedinput]', 'verify');
   await page.click('[data-key=start]');
   await page.waitForTimeout(500);
   const ns = await page.evaluate(() => Renderer.nodeScreen(window.__game.state.map.center));
@@ -46,6 +49,19 @@ function check(name, ok, detail) {
   await page.waitForTimeout(250);
   await page.click('[data-key=buy-post]');
   await page.waitForTimeout(250);
+  // aim the quadrant at the most road before confirming
+  await page.evaluate(() => {
+    const st = window.__game.state;
+    const gm = UI.getGhost();
+    if (!gm) return;
+    let bd = 0, bc = -1;
+    for (let d = 0; d < 4; d++) {
+      const c = Sightlines.compute(st.map, gm.node, 'POST', d).length;
+      if (c > bc) { bc = c; bd = d; }
+    }
+    while (gm.dir !== bd) document.querySelector('[data-key=turn-cw]').click();
+  });
+  await page.waitForTimeout(150);
   await page.click('[data-key=confirm]');
   await page.evaluate(() => { window.__warp = 30; });
   await page.waitForFunction(() => window.__game.state.time >= 60, { timeout: 40000 });

@@ -667,20 +667,40 @@ var UI = (() => {
     return null;   // active
   }
 
-  // The sightings map: where each frame was taken, in time order, with
+  // Where was the CAR? The map infers the vehicle's position from the
+  // image (the read's street segment), not the pole that shot it —
+  // plotting camera positions fabricated impossible zigzags when two
+  // poles photographed the same street (player-directed fix).
+  function carXY(r) {
+    const s = state.map.segs[r.segId];
+    if (!s) return { x: state.map.nodes[r.camNode].x, y: state.map.nodes[r.camNode].y };
+    const a = state.map.nodes[s.a], b = state.map.nodes[s.b];
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  }
+
+  // street-level distance between two sightings (segment ends, best case)
+  function carDist(r1, r2) {
+    const s1 = state.map.segs[r1.segId], s2 = state.map.segs[r2.segId];
+    if (!s1 || !s2) return CaseSystem.nodeDist(state, r1.camNode, r2.camNode);
+    return Math.min(
+      CaseSystem.nodeDist(state, s1.a, s2.a), CaseSystem.nodeDist(state, s1.a, s2.b),
+      CaseSystem.nodeDist(state, s1.b, s2.a), CaseSystem.nodeDist(state, s1.b, s2.b));
+  }
+
+  // The sightings map: where each frame's CAR was, in time order, with
   // the legs between them — and a named problem when a leg is impossible
   // ("9 blocks in 3s: nothing drives that fast").
   function drawCaseMap(cv, kase, ev) {
     const g = cv.getContext('2d');
     const map = state.map, W = cv.width, H = cv.height, m = 26;
     g.fillStyle = '#0a0c11'; g.fillRect(0, 0, W, H);
-    // zoom to the case's own neighbourhood: scene + every sighting, padded
-    const involved = [kase.spawnNode, ...ev.map(r => r.camNode)];
+    // zoom to the case's own neighbourhood: scene + every car position
+    const sn = map.nodes[kase.spawnNode];
+    const pts = [{ x: sn.x, y: sn.y }, ...ev.map(r => carXY(r))];
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-    for (const n of involved) {
-      const nd = map.nodes[n];
-      x0 = Math.min(x0, nd.x); x1 = Math.max(x1, nd.x);
-      y0 = Math.min(y0, nd.y); y1 = Math.max(y1, nd.y);
+    for (const p of pts) {
+      x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
+      y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
     }
     x0 = Math.max(0, x0 - 2); x1 = Math.min(map.W - 1, x1 + 2);
     y0 = Math.max(0, y0 - 2); y1 = Math.min(map.H - 1, y1 + 2);
@@ -701,29 +721,39 @@ var UI = (() => {
     g.fillStyle = '#ff5a52';
     g.fillRect(-7, -7, 14, 14);
     g.restore();
-    // legs between consecutive sightings — impossible legs paint LAST so
-    // a clean return leg on the same street can never hide them
+    const cx2 = (p) => ox + p.x * scale, cy2 = (p) => oy + p.y * scale;
+    // legs between consecutive CAR positions — impossible legs paint LAST
+    // so a clean return leg on the same street can never hide them
     for (const pass of [true, false]) {
       for (let i = 1; i < ev.length; i++) {
         const a = ev[i - 1], b = ev[i];
         const ok = CaseSystem.pairCoherent(state, a, b);
         if (ok !== pass) continue;
+        const pa = carXY(a), pb = carXY(b);
         g.strokeStyle = ok ? 'rgba(57,211,192,0.75)' : 'rgba(255,90,82,0.95)';
         g.lineWidth = ok ? 3 : 4;
         g.setLineDash(ok ? [] : [7, 6]);
-        g.beginPath(); g.moveTo(px(a.camNode), py(a.camNode)); g.lineTo(px(b.camNode), py(b.camNode)); g.stroke();
+        g.beginPath(); g.moveTo(cx2(pa), cy2(pa)); g.lineTo(cx2(pb), cy2(pb)); g.stroke();
         g.setLineDash([]);
       }
     }
-    // numbered sightings (jitter repeats at the same pole so both show)
+    // numbered sightings at the car's inferred spot, with heading ticks
+    // (jitter repeats on the same street so every frame shows)
     g.font = 'bold 13px monospace'; g.textAlign = 'center'; g.textBaseline = 'middle';
     const seenAt = {};
+    const HD = [[1, 0], [0, 1], [-1, 0], [0, -1]];
     ev.forEach((r, i) => {
-      const k = r.camNode;
+      const p = carXY(r);
+      const k = r.segId;
       const jit = (seenAt[k] || 0) * 9;
       seenAt[k] = (seenAt[k] || 0) + 1;
-      const x = px(k) + jit, y = py(k) - jit;
+      const x = cx2(p) + jit, y = cy2(p) - jit;
       const st = readStatus(r);
+      if (r.heading !== undefined && r.vehId !== null) {
+        const [hx, hy] = HD[r.heading];
+        g.strokeStyle = st ? '#5a6070' : '#ffc84a'; g.lineWidth = 2.5;
+        g.beginPath(); g.moveTo(x, y); g.lineTo(x + hx * 17, y + hy * 17); g.stroke();
+      }
       g.fillStyle = st ? '#5a6070' : '#ffc84a';
       g.beginPath(); g.arc(x, y, 10, 0, 7); g.fill();
       g.fillStyle = '#0b0d12';
@@ -744,7 +774,7 @@ var UI = (() => {
     for (let i = 1; i < ev.length; i++) {
       const a = ev[i - 1], b = ev[i];
       if (CaseSystem.pairCoherent(state, a, b)) { clean++; continue; }
-      const dd = CaseSystem.nodeDist(state, a.camNode, b.camNode);
+      const dd = carDist(a, b);
       const dt = Math.max(0.1, b.t - a.t);
       out.push(`<span class="bad">⚠ #${i} → #${i + 1}: ${dd} blocks in ${dt < 10 ? dt.toFixed(1) : Math.round(dt)}s — nothing drives that fast. One of these frames is someone else.</span>`);
     }
