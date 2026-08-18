@@ -35,3 +35,9 @@ A running record kept during the build. Prompt-built with an AI coding agent
 |---|---|---|---|
 | 1 | "implement the spec, abide by rules and buildlog requirements, repo at each milestone, all steps incl. tuning, evolution, asset creation" | `70ca2d1` | Repo scaffold: build pipeline, vendor lib, log |
 | 2 | (same directive, milestone 2) | `aef11d6` | CONFIG + PRNG utils + validated deterministic mapgen; test_mapgen green: 200/200 seeds converge, 0 fallbacks, golden seed valid |
+| 3 | (milestone 3: headless sim core) | `4c46fc0` | Full sim: sightlines/confidence, drives+upload cycle, cases/coherence, vandals with livelock guards, crew memory, shifts+overtime+Review, ladder, save. Fixed: destroyed cameras shifted coherence distances (reads now stamp their pole). |
+| 4 | (milestone 4: trial player + full battery) | `daa7185` | Trial player exercises all three verbs; misread model reshaped (ambiguity-scaled, scene-local) after 70-bar files flooded with false evidence; threshold probe found the 55-60 ridge the design wants; event queue became a cursor ring after action-emitted events were silently wiped; shift-5 signature test green on 3 seeds; census 0/8 timeouts, Review rules both ways, refuse path works. Battery 7/7 green. |
+
+**Problems & fixes this session:** (1) auto-closures at STRICT bar were a false-charge factory — oblique reads sat at conf 74 vs CLARITY 75; misattachment now scales with ambiguity and stays near the crime scene. (2) The signature sequence failed because the syndicate case closed *before* shift 5 — syndicate jobs now land late in their shift. (3) Events were cleared at tick start, wiping everything actions emitted between ticks — replaced with a seq-cursor ring every consumer reads independently.
+
+**Where things stand:** headless game complete and tuned to a first playable band; next: renderer/UI (files 16+), then tutorial/demo/save wiring, Playwright tests, sweeps, GA.
