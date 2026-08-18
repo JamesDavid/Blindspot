@@ -160,10 +160,36 @@ var CaseSystem = (() => {
   };
   const TIP_VERBS = {
     'BANK ROBBERY': 'rob', 'OFFICE BURGLARY': 'hit', 'ARMED ROBBERY': 'hold up',
-    'SHOPLIFTING': 'run from', 'MUGGING': 'flee', 'BREAK-IN': 'leave',
+    'SHOPLIFTING': 'run from', 'MUGGING': 'flee', 'BREAK-IN': 'flee',
     'CAR THEFT': 'boost a car near', 'SHAKEDOWN': 'work', 'PURSE SNATCHING': 'strike at',
     'SMASH-AND-GRAB': 'hit', 'SYNDICATE HEIST': 'clean out'
   };
+
+  // One scene pool per residential/commercial district, cached per map;
+  // the district is drawn evenly first so no district's node count can
+  // dominate the tip line.
+  function pettyScene(state, rng) {
+    const map = state.map;
+    if (!map._pettyScenes) {
+      const pools = { HOUSES: [], APARTMENTS: [], DOWNTOWN: [] };
+      for (const n of map.nodes) {
+        if (n.exit || !map.adj[n.id] || map.adj[n.id].length < 2) continue;
+        if (map.distToExit[n.id] < CONFIG.MapGen.MIN_ESCAPE_SEGMENTS) continue;
+        const d = map.districts[n.id];
+        if (pools[d]) pools[d].push(n.id);
+      }
+      map._pettyScenes = pools;
+    }
+    const order = ['HOUSES', 'APARTMENTS', 'DOWNTOWN'];
+    const weights = order.map(d => map._pettyScenes[d].length ? 1 : 0);
+    const district = order[weightedIndex(weights, rng())];
+    const pool = map._pettyScenes[district];
+    if (!pool || !pool.length) {
+      const zones = map.spawnZones;
+      return zones[Math.floor(rng() * zones.length)];
+    }
+    return pool[Math.floor(rng() * pool.length)];
+  }
 
   function openCrime(state, type) {
     const rng = () => State.rngNext(state, 'crimes');
@@ -179,8 +205,12 @@ var CaseSystem = (() => {
       spawnNode = state.map.poi[pick[0]];
       kind = pick[1]; landmark = pick[2];
     } else {
-      const zones = state.map.spawnZones;
-      spawnNode = zones[Math.floor(rng() * zones.length)];
+      // Petty scenes happen where people live and shop — spread across the
+      // named districts (player-directed: leaving the row houses is not a
+      // crime, and the tip line was all row houses because scenes were
+      // drawn from spawn zones, which skew to the outer ring). Never so
+      // close to an exit that the getaway leaves no track.
+      spawnNode = pettyScene(state, rng);
       const district = state.map.districts[spawnNode] || 'HOUSES';
       const k = PETTY_KINDS[district] || ['THEFT', 'THE ' + district];
       kind = k[0]; landmark = k[1];
