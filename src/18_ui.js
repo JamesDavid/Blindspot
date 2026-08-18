@@ -1427,7 +1427,7 @@ var UI = (() => {
     const o = h('div', 'overlay title');
     o.setAttribute('data-key', 'title');
     o.innerHTML = `<h1>BLIND SPOT</h1>
-      <div class="tag">Every camera you place teaches them where not to drive.</div>`;
+      <div class="tag">Crime doesn't stop itself. It drives away.</div>`;
     if (opts.resume) {
       const rb = h('button', 'bigbtn primary', `RESUME YOUR SHIFT — SHIFT ${opts.resume.shift} · ${opts.resume.seed}`);
       rb.setAttribute('data-key', 'resume');

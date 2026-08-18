@@ -1,5 +1,7 @@
 # BLIND SPOT
 
+*Crime doesn't stop itself. It drives away.*
+
 A portrait mobile web prototype for the Meta Horizon Creator Competition (Tower Defense & Strategy).
 
 **▶ Play the current build: https://jamesdavid.github.io/Blindspot/** (open on a phone, or a narrow browser window)

@@ -2,7 +2,7 @@
 
 ## Elevator pitch (first sentence carries the hook; only it shows uncropped)
 
-Your cameras never stop anyone — they take pictures, pictures expire, and every camera you place teaches the crews where not to drive. BLIND SPOT is a tower-defense where the towers produce evidence instead of damage: log plates, corroborate routes, make arrests that must still stand up in court, and hold a city together while scrappers strip your poles for the solar panels. Too few convictions and you're relieved; too many wrong ones and you're relieved. Play it in one thumb, in portrait, in ten minutes.
+Crime doesn't stop itself — it drives away, and your cameras are the only thing that remembers: they take pictures, pictures expire, and every camera you place teaches the crews where not to drive. BLIND SPOT is a tower-defense where the towers produce evidence instead of damage: log plates, corroborate routes, make arrests that must still stand up in court, and hold a city together while scrappers strip your poles for the solar panels. Too few convictions and you're relieved; too many wrong ones and you're relieved. Play it in one thumb, in portrait, in ten minutes.
 
 ## About — Inspiration
 

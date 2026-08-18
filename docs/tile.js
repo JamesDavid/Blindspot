@@ -22,7 +22,7 @@ const html = `<!DOCTYPE html><html><head><style>
   <img src="07_strike.png">
   <div class="grad"></div>
   <h1>BLIND SPOT</h1>
-  <div class="tag">Every camera you place teaches them where not to drive.</div>
+  <div class="tag">Crime doesn't stop itself. It drives away.</div>
 </body></html>`;
 
 (async () => {
