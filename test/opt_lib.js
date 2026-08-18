@@ -62,11 +62,14 @@ function siteScore(sb, state, n, g, dir) {
 
 // Best pole AND best quadrant aim for a POST (§12: aiming is the skill —
 // so the trial player must exercise it or the sweeps are dishonest).
-function bestSite(sb, state, g) {
+// An optional anchor restricts the search to a neighbourhood — the
+// syndicate stakeout that the warrant, weighed x3, demands.
+function bestSite(sb, state, g, anchor, hops) {
   let best = null, bestScore = -Infinity;
   for (const node of state.map.nodes) {
     if (node.exit || !state.map.adj[node.id].length) continue;
     if (sb.CameraSystem.camAt(state, node.id)) continue;
+    if (anchor !== undefined && sb.CaseSystem.nodeDist(state, node.id, anchor) > hops) continue;
     for (let dir = 0; dir < 4; dir++) {
       const s = siteScore(sb, state, node.id, g, dir);
       if (s > bestScore) { bestScore = s; best = { node: node.id, dir }; }
@@ -137,6 +140,19 @@ function makeTrialPlayer(sb, genome, opts) {
       Actions.adjudicate(state, kase.id, chargeScore > g.adjBias ? 'CHARGE' : 'RELEASE');
     }
 
+    // ---- the lineup: tie unidentified files to their strongest candidate ----
+    for (const kase of state.cases) {
+      if (kase.status !== 'OPEN' || kase.plate !== null || !kase._candPlates) continue;
+      if (state.time - kase.openedAt < 6) continue;
+      const scores = {};
+      for (const r of state.reads) {
+        if (r.candidateOf === kase.id) scores[r.actualPlate] = (scores[r.actualPlate] || 0) + r.conf;
+      }
+      let bestPlate = null, bs = -1;
+      for (const p in scores) if (scores[p] > bs) { bs = scores[p]; bestPlate = p; }
+      if (bestPlate && spend()) Actions.identify(state, kase.id, bestPlate);
+    }
+
     // ---- build & works (the primary verb) ----
     const wanted = Math.min(10, Math.ceil(Math.max(1, state.shift.num) * g.buildPace) + 1);
     const relays = state.cameras.filter(c => c.type === 'RELAY').length;
@@ -166,7 +182,14 @@ function makeTrialPlayer(sb, genome, opts) {
         const spot = bestLongSite(sb, state);
         if (spot && spend()) Actions.place(state, spot.node, 'LONG', spot.dir);
       } else if (state.budget >= sb.CONFIG.Cameras.POST.COST) {
-        const s = bestSite(sb, state, g);
+        // the syndicate block gets a staked-out chain before expansion
+        let s = null;
+        if (state.cameras.length >= 3) {
+          const near = state.cameras.filter(c => c.type !== 'RELAY' &&
+            sb.CaseSystem.nodeDist(state, c.node, state.map.syndicate) <= sb.CONFIG.Cases.ANCHOR_DIST).length;
+          if (near < 2) s = bestSite(sb, state, g, state.map.syndicate, 3);
+        }
+        if (!s) s = bestSite(sb, state, g);
         if (s && spend()) { if (Actions.place(state, s.node, 'POST', s.dir).ok) mem.placed++; }
       }
     }

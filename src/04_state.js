@@ -95,7 +95,7 @@ var State = (() => {
         closures: 0, falseCharges: 0, colds: 0, contestedShown: 0,
         contestedResolved: 0, autoReleased: 0, crimes: 0, vandalsSpawned: 0,
         vandalActs: 0, vandalAbandons: 0, dataLostReads: 0, reroutes: 0,
-        witnessCases: 0, bounties: 0, tips: 0, uploads: 0
+        witnessCases: 0, bounties: 0, tips: 0, uploads: 0, identified: 0
       }
     };
 

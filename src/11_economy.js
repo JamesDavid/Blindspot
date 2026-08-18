@@ -11,7 +11,7 @@ var Economy = (() => {
 
   function networkIntegrity(state) {
     if (state.stats.built === 0) return 50;   // no network yet: neutral, not zero
-    const working = state.cameras.length;
+    const working = state.cameras.filter(c => c.type !== 'OFFICER').length;  // tours rotate off by design
     return clamp(100 * working / state.stats.built, 0, 100);
   }
 

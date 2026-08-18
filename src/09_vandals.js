@@ -16,7 +16,8 @@ var VandalSystem = (() => {
   }
 
   function pickTarget(state, vandal) {
-    const cams = state.cameras.filter(c => c.type !== undefined);
+    // nobody strips a pole with a uniform standing on it
+    const cams = state.cameras.filter(c => c.type !== 'OFFICER');
     if (!cams.length) return null;
     if (vandal.type === 'SCRAPPER') {
       // isolation: fewest other cameras watching the pole
@@ -118,6 +119,7 @@ var VandalSystem = (() => {
       }
       const read = {
         id: state.nextReadId++, t: state.time, segId: entry.seg, vehId: null,
+        subjectNode: node,     // where the figure stood — the still shoots this
         crewId: crew.id,
         actualPlate: crew.plate || 'CREW', plate: crew.plate || 'CREW',
         trueMatch: true, conf, qualifying,

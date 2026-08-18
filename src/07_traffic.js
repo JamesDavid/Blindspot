@@ -111,18 +111,15 @@ var Traffic = (() => {
     }
   }
 
+  // Ambient traffic enters from the city limits and drives THROUGH
+  // (player-directed): cars never pop into existence mid-map.
   function pickAmbientTrip(state) {
-    const nodes = state.map.nodes;
     const rng = () => State.rngNext(state, 'traffic');
-    let from = -1, guard = 40;
-    while (guard-- > 0) {
-      const n = Math.floor(rng() * nodes.length);
-      if (state.map.adj[n].length) { from = n; break; }
-    }
-    if (from < 0) return null;
     const exits = state.map.exits;
-    const to = exits[Math.floor(rng() * exits.length)];
-    if (to === from) return null;
+    if (exits.length < 2) return null;
+    const from = exits[Math.floor(rng() * exits.length)];
+    let to = exits[Math.floor(rng() * exits.length)];
+    if (to === from) to = exits[(exits.indexOf(from) + 1) % exits.length];
     return { from, to };
   }
 

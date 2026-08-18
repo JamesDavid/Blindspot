@@ -41,6 +41,10 @@ var CONFIG = Object.freeze({
     ANCHOR_DIST: 6,                 // player-directed: the chain starts AT the scene — the earliest closing read must come from a camera within this many blocks of the crime; the last read is where they're taken down
     SECOND_RUN_AT: 0.4,             // fraction of the lifetime after which the suspect is seen driving again — without a second pass, one crime could never produce a multi-camera track
     ENGAGED_AT: 2,                  // player-directed-era rebalance: clearance judges files the network actually worked (≥ this many reads, or a surfaced card); a file with no real lead lapses quietly — the city is bigger than the network
+    UNIDENTIFIED_CHANCE: 0.3,       // player-directed: some witnesses catch no plate — "brown SUV with damage robbed the bank!" — and the file opens on the description alone (0.35 collapsed the census win rate)
+    IDENTIFY_EXTEND: 0.6,           // tying the file renews it by this fraction of a lifetime — the investigation properly starts at the lineup, not the crime
+    CANDIDATE_DIST: 5,              // player-directed: clearly-photographed cars matching the description within this many blocks of the scene become candidates
+    CANDIDATE_MAX: 4,               // player-directed: at most this many distinct candidate plates per file — a lineup, not a phonebook
     CLOSURE_CONFIDENCE_SUM: 210,    // spec-authored: three serviceable reads or two clean ones plus a poor one
     LIFETIME_SECONDS: 90,           // re-swept (test/opt_lifetime.js) after quadrant cameras: 90x3 (51.0) now clearly beats 75x3 (41.2) — narrower sectors need longer files; the optimum moved with the mechanics again
     CONTESTED_BAND: 12,             // judgment-tuned: width of the near-bar band that surfaces a card
@@ -64,6 +68,7 @@ var CONFIG = Object.freeze({
     LONG:  { COST: 60, RANGE: 5, DIRECTIONS: 1, CONF_MOD: 10 },   // spec-authored: aimed at placement, forever
     DOME:  { COST: 55, RANGE: 1, DIRECTIONS: 4, CONF_MOD: -8 },   // spec-authored: many angles, poor reads
     RELAY: { COST: 35, RANGE: 0, DIRECTIONS: 0, CONF_MOD: 0 },    // spec-authored: continuous upload for neighbours, nothing else
+    OFFICER: { COST: 55, RANGE: 1, DIRECTIONS: 4, CONF_MOD: 6, TOUR_SECONDS: 45 }, // player-directed: post an officer instead of a camera — pricier per minute of coverage, one corner only, eyewitness reads file instantly (no drive to lose), vandals leave the uniform alone, and the tour ENDS. Camera-free play is possible; it just costs like overtime pay.
     RELOCATE_COST_FRACTION: 0.5     // spec-authored: relocation is a routine move, not a last resort
   },
 

@@ -40,12 +40,41 @@ var CaseSystem = (() => {
   function usableEvidence(state, kase) {
     const out = [];
     for (const r of state.reads) {
-      if (r.caseId !== kase.id || r.lost || r.uploadedAt === null) continue;
+      if (r.caseId !== kase.id || r.lost || r.uploadedAt === null || r.dismissed) continue;
       if (state.time >= r.expiresAt) continue;
       out.push(r);
     }
     return out;
   }
+
+  // The analyst can pull an irrelevant frame from a file (player-directed):
+  // excising a poisoned frame can clean a contested file and let a track
+  // close — and excising your own true frames is a new way to be wrong.
+  Actions.dismissRead = function (state, caseId, readId) {
+    const kase = byId(state, caseId);
+    if (!kase) return { ok: false, reason: 'NO SUCH CASE' };
+    if (kase.status !== 'OPEN' && kase.status !== 'CONTESTED') return { ok: false, reason: 'FILE NOT WORKABLE' };
+    const read = state.reads[readId - 1];
+    if (!read || read.caseId !== kase.id) return { ok: false, reason: 'NOT IN THIS FILE' };
+    read.dismissed = !read.dismissed;   // a toggle — pulled frames can come back
+    state.stats.dismissed = (state.stats.dismissed || 0) + (read.dismissed ? 1 : -1);
+    State.emit(state, { type: 'frameDismissed', caseId: kase.id, readId, dismissed: read.dismissed });
+    if (read.dismissed) State.log(state, 'Frame pulled from the file. Tap it again to restore.', 'first-dismiss');
+    // a cleaned contested file may go back to quietly building
+    if (kase.status === 'CONTESTED') {
+      const g = grade(state, usableEvidence(state, kase), gradeOpts(kase));
+      const S = CONFIG.Cases.CLOSURE_CONFIDENCE_SUM;
+      const tier = CONFIG.Ladder.TIERS[state.ladder.tier] || CONFIG.Ladder.TIERS[1];
+      const band = CONFIG.Cases.CONTESTED_BAND * (tier.contestedMult || 1);
+      const nearBar = g.best && g.bestSum >= S - band && g.bestSum < S;
+      if (!g.contradiction && !nearBar) {
+        kase.status = 'OPEN';
+        kase.contested = null;
+        State.log(state, 'File cleaned up — case building again.', null);
+      }
+    }
+    return { ok: true };
+  };
 
   // Which pairs of reads cannot be one vehicle — the evidence sheet marks
   // these so the player can see WHERE the file's story breaks.
@@ -160,8 +189,16 @@ var CaseSystem = (() => {
     if (!kase) {
       if (!crew.plate || type !== 'SYNDICATE') crew.plate = makePlate(() => State.rngNext(state, 'plates'));
       if (type === 'SYNDICATE' && !crew.plate) crew.plate = makePlate(() => State.rngNext(state, 'plates'));
+      // some witnesses catch no plate (player-directed): the file opens on
+      // the description alone and cannot be tracked, arrested or charged
+      // until the analyst ties it to a candidate car
+      const unidentified = type !== 'SYNDICATE' &&
+        State.rngNext(state, 'crimes') < CONFIG.Cases.UNIDENTIFIED_CHANCE;
       kase = {
-        id: state.nextCaseId++, type, plate: crew.plate, crewId,
+        id: state.nextCaseId++, type,
+        truePlate: crew.plate,
+        plate: unidentified ? null : crew.plate,
+        crewId,
         kind, landmark,
         spawnNode, openedAt: state.time,
         coldAt: state.time + CONFIG.Cases.LIFETIME_SECONDS,
@@ -170,42 +207,77 @@ var CaseSystem = (() => {
         _peakUsable: 0
       };
       // the witness saw the actual car — usually well, sometimes vaguely
-      kase.witnessDesc = witnessDescription(carIdentity(kase.plate),
+      kase.witnessDesc = witnessDescription(carIdentity(kase.truePlate),
         State.rngNext(state, 'witness'), State.rngNext(state, 'witness'));
       state.cases.push(kase);
+      if (kase.plate === null) {
+        State.log(state, 'No plate on the file — just "a ' + kase.witnessDesc + '". Candidates will collect on the card.', 'first-unidentified');
+      }
     }
 
     // choose exit weighted toward nearer ones
     const exits = state.map.exits;
     const weights = exits.map(e => 1 / (1 + nodeDist(state, spawnNode, e)));
     const exit = exits[weightedIndex(weights, rng())];
-    const veh = Traffic.spawnVehicle(state, 'SUSPECT', spawnNode, exit, crewId, kase.id, kase.plate);
+    const veh = Traffic.spawnVehicle(state, 'SUSPECT', spawnNode, exit, crewId, kase.id, kase.truePlate || kase.plate);
 
     State.emit(state, { type: 'crime', crimeType: type, node: spawnNode, caseId: kase.id, kind });
     // every reported crime rings the tip line (player-directed) with what
     // the witness actually saw; high trust gets zones flagged EARLY at the
     // telegraph, before the car moves
     state.stats.tips++;
-    State.emit(state, { type: 'tip', node: spawnNode, caseId: kase.id, early: false });
     const verb = TIP_VERBS[kind] || 'flee';
+    State.emit(state, {
+      type: 'tip', node: spawnNode, caseId: kase.id, early: false,
+      bubble: 'Saw a ' + kase.witnessDesc + '\n' + verb + ' ' + landmark + '!'
+    });
     State.log(state, 'Tip line: saw a ' + kase.witnessDesc + ' ' + verb + ' ' + landmark + '!', null);
     return kase;
   }
 
   // ---- read attachment (called by Traffic and Vandals) ----
 
+  // Unidentified files collect CANDIDATES instead of evidence: any
+  // clearly-photographed car matching the witness description near the
+  // scene joins the lineup, capped, until the analyst ties the file.
+  function candidateScan(state, read) {
+    const s = state.map.segs[read.segId];
+    for (const kase of state.cases) {
+      if (kase.plate !== null) continue;
+      if (kase.status !== 'OPEN' || state.time >= kase.coldAt) continue;
+      const d = Math.min(nodeDist(state, s.a, kase.spawnNode), nodeDist(state, s.b, kase.spawnNode));
+      if (d > CONFIG.Cases.CANDIDATE_DIST) continue;
+      if (!descriptionMatches(kase.witnessDesc, carIdentity(read.actualPlate))) continue;
+      if (!kase._candPlates) kase._candPlates = {};
+      const isNew = !kase._candPlates[read.actualPlate];
+      if (isNew && Object.keys(kase._candPlates).length >= CONFIG.Cases.CANDIDATE_MAX) continue;
+      kase._candPlates[read.actualPlate] = true;
+      read.candidateOf = kase.id;
+      kase._leads = (kase._leads || 0) + 1;
+      if (isNew) State.emit(state, { type: 'candidate', caseId: kase.id, plate: read.actualPlate });
+      return;   // a frame joins one lineup
+    }
+  }
+
   function attachRead(state, read, veh, cam) {
     if (!read.qualifying) return;     // below the bar: never enters a file (§7)
     if (veh && veh.caseId !== null) {
       const kase = byId(state, veh.caseId);
-      if (kase && (kase.status === 'OPEN' || kase.status === 'CONTESTED') && state.time < kase.coldAt) {
+      // a tied file only accepts reads of ITS plate — if you tied it to
+      // the wrong car, the real crew's reads no longer help you
+      if (kase && kase.plate !== null && veh.plate === kase.plate &&
+          (kase.status === 'OPEN' || kase.status === 'CONTESTED') && state.time < kase.coldAt) {
         read.caseId = kase.id;
-        read.trueMatch = true;
+        read.trueMatch = read.actualPlate === kase.truePlate;
         read.plate = kase.plate;
         kase._leads = (kase._leads || 0) + 1;
+        return;
       }
+      candidateScan(state, read);   // its own file untied (or gone): the lineup may still want this frame
       return;
     }
+    candidateScan(state, read);
+    if (read.candidateOf !== undefined) return;
     // Ambient vehicle. A clean read identifies an uninvolved plate and is
     // discarded; an ambiguous one (below CLARITY) can misattach to the
     // nearest open case — §7.1's trap, priced by the threshold. How often
@@ -219,7 +291,7 @@ var CaseSystem = (() => {
     const s = state.map.segs[read.segId];
     for (const kase of state.cases) {
       if (kase.status !== 'OPEN' && kase.status !== 'CONTESTED') continue;
-      if (kase.type === 'VANDAL') continue;
+      if (kase.type === 'VANDAL' || kase.plate === null) continue;
       if (state.time >= kase.coldAt) continue;
       const d = Math.min(nodeDist(state, s.a, kase.spawnNode), nodeDist(state, s.b, kase.spawnNode));
       if (d < bestD) { bestD = d; best = kase; }
@@ -373,6 +445,38 @@ var CaseSystem = (() => {
     return { ok: true, kase };
   };
 
+  // Tie an unidentified file to a candidate car (player-directed): its
+  // lineup frames become evidence, and from here the normal track →
+  // arrest → charge pipeline applies. Tie it to the wrong car and the
+  // real crew's reads stop helping you — the deepest trap in the game.
+  Actions.identify = function (state, caseId, plate) {
+    const kase = byId(state, caseId);
+    if (!kase) return { ok: false, reason: 'NO SUCH CASE' };
+    if (kase.plate !== null) return { ok: false, reason: 'FILE ALREADY TIED' };
+    if (kase.status !== 'OPEN') return { ok: false, reason: 'FILE NOT OPEN' };
+    if (!kase._candPlates || !kase._candPlates[plate]) return { ok: false, reason: 'NOT IN THE LINEUP' };
+    kase.plate = plate;
+    let attached = 0;
+    for (const r of state.reads) {
+      if (r.candidateOf !== kase.id) continue;
+      if (r.actualPlate === plate) {
+        r.caseId = kase.id;
+        r.plate = plate;
+        r.trueMatch = r.actualPlate === kase.truePlate;
+        delete r.candidateOf;
+        attached++;
+      } else {
+        delete r.candidateOf;   // the rest of the lineup goes home
+      }
+    }
+    // the clock restarts where the investigation properly begins
+    kase.coldAt = Math.max(kase.coldAt, state.time + CONFIG.Cases.LIFETIME_SECONDS * CONFIG.Cases.IDENTIFY_EXTEND);
+    state.stats.identified = (state.stats.identified || 0) + 1;
+    State.emit(state, { type: 'identified', caseId: kase.id, plate, frames: attached });
+    State.log(state, 'File tied to ' + plate + '. Track it, and the arrest can follow.', 'first-identified');
+    return { ok: true, attached };
+  };
+
   Actions.setThreshold = function (state, v) {
     const T = CONFIG.Threshold;
     const nv = clamp(Math.round(v), T.MIN, T.MAX);
@@ -398,9 +502,12 @@ var CaseSystem = (() => {
         kase._secondRun = true;
         const exits = state.map.exits;
         const exit = exits[Math.floor(State.rngNext(state, 'crimes') * exits.length)];
-        const veh = Traffic.spawnVehicle(state, 'SUSPECT', kase.spawnNode, exit, kase.crewId, kase.id, kase.plate);
+        const veh = Traffic.spawnVehicle(state, 'SUSPECT', kase.spawnNode, exit, kase.crewId, kase.id, kase.truePlate || kase.plate);
         if (veh) {
-          State.emit(state, { type: 'tip', node: kase.spawnNode, caseId: kase.id, early: false });
+          State.emit(state, {
+            type: 'tip', node: kase.spawnNode, caseId: kase.id, early: false,
+            bubble: 'Seen again —\na ' + (kase.witnessDesc || kase.plate) + '!'
+          });
           State.log(state, 'Seen again near ' + (kase.landmark || 'the scene') + ' — ' + (kase.witnessDesc || kase.plate) + '.', null);
         }
       }

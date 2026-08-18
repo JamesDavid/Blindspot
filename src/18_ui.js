@@ -91,6 +91,8 @@ var UI = (() => {
 .ctxbtn .ex { color:#8b93a5; font-size:8.5px; }
 .ctxbtn[data-refused] { opacity:0.45; }
 .ctxbtn.demolit { outline:2px solid #ffc84a; box-shadow:0 0 12px #ffc84a88; animation:blink 0.5s infinite; }
+.demolit { outline:2px solid #ffc84a; box-shadow:0 0 12px #ffc84a88; animation:blink 0.5s infinite; }
+.demopress { transform:scale(0.9); filter:brightness(1.6); transition:transform 0.08s; }
 .dismiss { align-self:flex-end; background:#232837; border:1px solid #343b4e; color:#aab2c0;
   border-radius:7px; padding:6px 12px; font-size:11px; font-weight:700; }
 .confirmwrap { position:absolute; z-index:29; display:flex; flex-direction:column; gap:6px; align-items:center; }
@@ -262,7 +264,7 @@ var UI = (() => {
     // an open case file follows its case: resolved or expired → it closes
     if (evsheetCaseId !== null) {
       const kase = CaseSystem.byId(state, evsheetCaseId);
-      if (!kase || kase.status !== 'CONTESTED') {
+      if (!kase || (kase.status !== 'CONTESTED' && kase.status !== 'OPEN')) {
         closeEvidenceSheet();
         if (kase && kase.status === 'COLD') identity('The file expired unanswered — released.');
       }
@@ -295,7 +297,7 @@ var UI = (() => {
       el.setAttribute('data-key', 'case-' + kase.id);
       el.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (kase.status === 'CONTESTED') {   // the card opens the case file
+        if (kase.status === 'CONTESTED' || kase.status === 'OPEN') {   // the card opens the case file
           openEvidenceSheet(kase.id);
           return;
         }
@@ -311,7 +313,7 @@ var UI = (() => {
   function caseIdentity(kase) {
     const ev = CaseSystem.usableEvidence(state, kase);
     const kind = kase.type === 'VANDAL' ? 'VANDAL CREW CASE' : kase.type + ' CASE';
-    return kind + ' — ' + kase.plate + ' · ' + ev.length + ' read' + (ev.length === 1 ? '' : 's') +
+    return kind + ' — ' + (kase.plate || 'NO PLATE') + ' · ' + ev.length + ' read' + (ev.length === 1 ? '' : 's') +
       ' · cold in ' + Math.max(0, Math.ceil(kase.coldAt - state.time)) + 's';
   }
 
@@ -358,6 +360,14 @@ var UI = (() => {
         el.querySelector('.release').onclick = (e) => {
           e.stopPropagation(); Actions.adjudicate(state, kase.id, 'RELEASE'); GameAudio.unlock();
         };
+      } else if (kase.status === 'OPEN' && kase.plate === null) {
+        const cand = kase._candPlates ? Object.keys(kase._candPlates).length : 0;
+        el.innerHTML = `
+          <div class="typ">UNIDENTIFIED · ${kase.kind || kase.type}</div>
+          <div class="plate" style="font-size:8.5px;line-height:1.3">"a ${kase.witnessDesc}"</div>
+          <div class="pips">${pips}</div>
+          <div class="evmeta" style="margin:1px 0">${cand ? cand + ' candidate' + (cand === 1 ? '' : 's') + ' — tap' : 'collecting…'}</div>
+          <div class="timer"><i style="width:${frac * 100}%;background:#b0813a"></i></div>`;
       } else if (kase.status === 'ARREST') {
         const trial = Math.max(0, Math.ceil(kase.convictAt - state.time));
         el.innerHTML = `
@@ -371,7 +381,7 @@ var UI = (() => {
           : kase.status === 'COLD' ? ' · COLD' : '';
         el.innerHTML = `
           <div class="typ">${kase.kind || (kase.type === 'VANDAL' ? 'VANDALISM' : kase.type)}${tail}</div>
-          <div class="plate">${kase.plate}</div>
+          <div class="plate">${kase.plate || 'NO PLATE'}</div>
           <div class="pips">${pips}</div>
           <div class="timer"><i style="width:${frac * 100}%"></i></div>`;
       }
@@ -400,6 +410,36 @@ var UI = (() => {
     const W = canvas.width, H = canvas.height;
     const rng = mulberry32(hashStr('still:' + read.id));
     const q = clamp((read.conf - 20) / 70, 0.08, 1);   // confidence IS image quality
+
+    // THE REAL PHOTO: rendered from the Cyclops' own head into the live
+    // 3D city, with the actual car on the actual street (player-directed:
+    // "we have all the 3d models"). The 2D scene below survives only as a
+    // fallback for a lost WebGL context.
+    const photoH = H * 0.8;
+    const shot = (typeof Renderer !== 'undefined' && Renderer.captureStill)
+      ? Renderer.captureStill(read) : null;
+    if (shot) {
+      // crop source to cover the photo region without stretching
+      const sAspect = shot.width / shot.height, dAspect = W / photoH;
+      let sw = shot.width, sh = shot.height, sx = 0, sy = 0;
+      if (sAspect > dAspect) { sw = shot.height * dAspect; sx = (shot.width - sw) / 2; }
+      else { sh = shot.width / dAspect; sy = (shot.height - sh) / 2; }
+      const smear = (1 - q) * W * 0.03;
+      if (smear > 1) {
+        g.globalAlpha = 0.4;
+        g.drawImage(shot, sx, sy, sw, sh, -smear, 0, W, photoH);
+      }
+      g.globalAlpha = 1;
+      g.drawImage(shot, sx, sy, sw, sh, 0, 0, W, photoH);
+      // murk swallows the frame as quality falls
+      g.fillStyle = `rgba(13,16,23,${(1 - q) * 0.5})`;
+      g.fillRect(0, 0, W, photoH);
+      // CCTV scanlines
+      g.fillStyle = 'rgba(0,0,0,0.07)';
+      for (let y = 0; y < photoH; y += 4) g.fillRect(0, y, W, 1.4);
+      drawPlateAndWeather(g, W, H, read, q, rng);
+      return;
+    }
 
     // night ground
     g.fillStyle = '#07090d'; g.fillRect(0, 0, W, H);
@@ -508,7 +548,12 @@ var UI = (() => {
       g.fillRect(cx - 4, cy - ch - 4, cw + 8, ch * 1.4 + 8);
     }
 
-    // the plate strip — the ANPR close-up along the bottom
+    drawPlateAndWeather(g, W, H, read, q, rng);
+  }
+
+  // the ANPR plate strip + weather, grime, grain and vignette — applied
+  // over BOTH the real 3D photo and the 2D fallback
+  function drawPlateAndWeather(g, W, H, read, q, rng) {
     g.fillStyle = 'rgba(5,6,9,0.88)';
     g.fillRect(0, H * 0.8, W, H * 0.2);
     const plate = read.plate || '???-???';
@@ -542,11 +587,32 @@ var UI = (() => {
       }
     }
     if (read.camTags > 0) {
+      // a fouled lens: grease blotches that swallow detail, and the
+      // telltale light-scatter bloom where grime catches the streetlight
       for (let i = 0; i < read.camTags + 1; i++) {
-        const sg = g.createRadialGradient(rng() * W, rng() * H * 0.7, 2, rng() * W, rng() * H * 0.7, W * 0.3);
-        sg.addColorStop(0, 'rgba(22,26,20,0.55)'); sg.addColorStop(1, 'rgba(0,0,0,0)');
+        const bx = rng() * W, by = rng() * H * 0.7;
+        const sg = g.createRadialGradient(bx, by, 2, bx, by, W * (0.18 + rng() * 0.16));
+        sg.addColorStop(0, 'rgba(26,30,22,0.7)');
+        sg.addColorStop(0.6, 'rgba(20,24,18,0.35)');
+        sg.addColorStop(1, 'rgba(0,0,0,0)');
         g.fillStyle = sg; g.fillRect(0, 0, W, H);
       }
+      g.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < read.camTags * 2; i++) {
+        const bx = rng() * W, by = rng() * H * 0.6;
+        const hg = g.createRadialGradient(bx, by, 1, bx, by, W * (0.08 + rng() * 0.1));
+        hg.addColorStop(0, 'rgba(190,180,140,0.22)');
+        hg.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = hg; g.fillRect(0, 0, W, H);
+      }
+      // a greasy smear dragged across the glass
+      const sy = H * (0.15 + rng() * 0.4);
+      const sm = g.createLinearGradient(0, sy, W, sy + H * 0.18);
+      sm.addColorStop(0, 'rgba(0,0,0,0)');
+      sm.addColorStop(0.5, 'rgba(150,145,120,0.12)');
+      sm.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = sm; g.fillRect(0, sy - H * 0.1, W, H * 0.35);
+      g.globalCompositeOperation = 'source-over';
     }
     // grain
     const specks = Math.floor((1 - q) * 170);
@@ -569,6 +635,7 @@ var UI = (() => {
     return state.reads.filter(r => r.caseId === kase.id).sort((a, b) => a.t - b.t);
   }
   function readStatus(r) {
+    if (r.dismissed) return ['PULLED FROM FILE', '#d8b0ab'];
     if (r.lost) return ['LOST WITH POLE', '#ff8a80'];
     if (r.uploadedAt === null) return ['ON THE POLE — UNSENT', '#ffb44a'];
     if (state.time >= r.expiresAt) return ['AGED OFF', '#8b93a5'];
@@ -681,7 +748,7 @@ var UI = (() => {
   function openEvidenceSheet(caseId) {
     closeEvidenceSheet();
     const kase = CaseSystem.byId(state, caseId);
-    if (!kase || kase.status !== 'CONTESTED') return;
+    if (!kase || (kase.status !== 'CONTESTED' && kase.status !== 'OPEN')) return;
     evsheetCaseId = caseId;
     const ev = allEvidence(kase);           // the WHOLE file, aged and lost included
     const active = ev.filter(r => !readStatus(r));
@@ -691,27 +758,98 @@ var UI = (() => {
     const idxOf = {};
     ev.forEach((r, i) => { idxOf[r.id] = i + 1; });
 
+    const untied = kase.plate === null;
     const sheet = h('div', 'evsheet');
     sheet.setAttribute('data-key', 'evsheet');
     const c = kase.contested || {};
-    sheet.innerHTML = `<div class="evhead"><b>CASE FILE — ${kase.plate}</b>
-      <span>${kase.kind || kase.type} at ${kase.landmark || 'the scene'} · ${ev.length} frame${ev.length === 1 ? '' : 's'}${active.length !== ev.length ? ' (' + active.length + ' usable)' : ''} · ${c.contradiction ? 'contradiction' : 'near the bar'} · cold in ${Math.max(0, Math.ceil(kase.coldAt - state.time))}s</span>
+    const situ = kase.status === 'CONTESTED' ? (c.contradiction ? 'contradiction' : 'near the bar')
+      : untied ? 'no plate on file' : 'building';
+    sheet.innerHTML = `<div class="evhead"><b>CASE FILE — ${untied ? 'NO PLATE' : kase.plate}</b>
+      <span>${kase.kind || kase.type} at ${kase.landmark || 'the scene'} · ${ev.length} frame${ev.length === 1 ? '' : 's'}${active.length !== ev.length ? ' (' + active.length + ' usable)' : ''} · ${situ} · cold in ${Math.max(0, Math.ceil(kase.coldAt - state.time))}s</span>
       <button data-key="ev-close">✕</button></div>
-      ${kase.witnessDesc ? `<div class="evhint" style="margin:0 0 8px"><span style="color:#ffc84a;font-weight:700">WITNESS: "a ${kase.witnessDesc}"</span> — does every frame match?</div>` : ''}`;
+      ${kase.witnessDesc ? `<div class="evhint" style="margin:0 0 8px"><span style="color:#ffc84a;font-weight:700">WITNESS: "a ${kase.witnessDesc}"</span> — ${untied ? 'which of these cars is it?' : 'does every frame match?'}</div>` : ''}`;
+
+    // an untied file shows the LINEUP: candidate cars photographed near
+    // the scene that fit the description. Tie the file to one and the
+    // track → arrest → charge pipeline unlocks. Choose carefully.
+    if (untied) {
+      const groups = {};
+      for (const r of state.reads) {
+        if (r.candidateOf !== kase.id) continue;
+        (groups[r.actualPlate] = groups[r.actualPlate] || []).push(r);
+      }
+      const plates = Object.keys(groups).sort((a, b) =>
+        groups[b].reduce((s, r) => s + r.conf, 0) - groups[a].reduce((s, r) => s + r.conf, 0));
+      if (!plates.length) {
+        sheet.appendChild(h('div', 'evhint',
+          'No candidates yet. Coverage near ' + (kase.landmark || 'the scene') + ' will photograph cars matching the description.'));
+      } else {
+        const grid = h('div', 'evgrid');
+        for (const p of plates) {
+          const frames = groups[p].sort((a, b) => b.conf - a.conf);
+          const bestR = frames[0];
+          const cell = h('div', 'evcell');
+          const cv = document.createElement('canvas');
+          cv.width = 352; cv.height = 200;
+          drawStill(cv, bestR);
+          cell.appendChild(cv);
+          const meta = h('div', 'evmeta');
+          meta.innerHTML = `${frames.length} frame${frames.length === 1 ? '' : 's'} · BEST CONF ${bestR.conf} · ${fmtTime(bestR.t)}`;
+          cell.appendChild(meta);
+          const btn = h('button', 'release', 'TIE FILE TO THIS CAR');
+          btn.style.cssText = 'width:100%;margin-top:4px;padding:8px 0;border:none;border-radius:7px;font-weight:800;font-size:10.5px;background:#31504f;color:#d2f2ef;';
+          btn.setAttribute('data-key', 'identify-' + kase.id + '-' + p);
+          btn.onclick = (e) => {
+            e.stopPropagation();
+            GameAudio.unlock();
+            const r = Actions.identify(state, kase.id, p);
+            if (r.ok) { closeEvidenceSheet(); openEvidenceSheet(kase.id); }
+          };
+          cell.appendChild(btn);
+          grid.appendChild(cell);
+        }
+        sheet.appendChild(grid);
+      }
+      sheet.appendChild(h('div', 'evhint',
+        'No plate on file — until you tie it to a car, nothing can be tracked, arrested, or charged.'));
+      const closer = h('div', 'evverdict');
+      const cb2 = h('button', 'release', 'KEEP COLLECTING');
+      cb2.setAttribute('data-key', 'ev-keep');
+      cb2.onclick = () => closeEvidenceSheet();
+      closer.appendChild(cb2);
+      sheet.appendChild(closer);
+      sheet.querySelector('[data-key=ev-close]').onclick = () => closeEvidenceSheet();
+      root.appendChild(sheet);
+      els.evsheet = sheet;
+      return;
+    }
 
     // the sightings map: scene, numbered frames in time order, and the
     // legs between them — impossible legs drawn dashed red and named
-    if (ev.length) {
+    // the map and leg diagnostics track only the frames still IN the
+    // file — pull a frame and the route redraws without it. Holding a
+    // PULL/RESTORE button previews the what-if before you commit.
+    const mapEv = ev.filter(r => !r.dismissed);
+    let redrawWhatIf = () => {};
+    if (mapEv.length) {
       const mapWrap = h('div', 'evmap');
       const mcv = document.createElement('canvas');
       mcv.width = 720; mcv.height = 440;
-      drawCaseMap(mcv, kase, ev);
+      drawCaseMap(mcv, kase, mapEv);
       mapWrap.appendChild(mcv);
       mapWrap.setAttribute('data-key', 'evmap');
       sheet.appendChild(mapWrap);
       const legs = h('div', 'evlegs');
-      legs.innerHTML = legDiagnostics(ev);
+      legs.innerHTML = legDiagnostics(mapEv);
       sheet.appendChild(legs);
+      redrawWhatIf = (r2, mode) => {
+        let list = ev.filter(x => !x.dismissed);
+        if (r2 && mode === 'pull') list = list.filter(x => x.id !== r2.id);
+        if (r2 && mode === 'restore') list = ev.filter(x => !x.dismissed || x.id === r2.id);
+        drawCaseMap(mcv, kase, list);
+        legs.innerHTML = (r2 ? `<b style="color:#7ad9ff">WHAT-IF ${mode === 'pull' ? 'WITHOUT' : 'WITH'} FRAME #${idxOf[r2.id]}:</b><br>` : '') +
+          legDiagnostics(list);
+      };
     }
 
     // reference frame, big
@@ -743,6 +881,27 @@ var UI = (() => {
       cell.appendChild(meta);
       const inConflict = pairs.some(p => p.includes(r.id));
       cell.onclick = () => { Renderer.centerOn(r.camNode); Renderer.pingNode(r.camNode, inConflict ? 'red' : 'cyan'); };
+      const canToggle = (kase.status === 'OPEN' || kase.status === 'CONTESTED') &&
+        (r.dismissed || !readStatus(r));
+      if (canToggle) {
+        const dm = h('button', null, r.dismissed ? '↩ RESTORE FRAME' : '✕ PULL FRAME');
+        dm.style.cssText = 'width:100%;margin-top:3px;padding:5px 0;border:none;border-radius:6px;' +
+          'font-size:9px;font-weight:700;letter-spacing:0.04em;' +
+          (r.dismissed ? 'background:#2f3a34;color:#abd8b8;' : 'background:#3a2f34;color:#d8b0ab;');
+        dm.setAttribute('data-key', 'ev-dismiss-' + r.id);
+        dm.onclick = (e) => {
+          e.stopPropagation();
+          const res = Actions.dismissRead(state, kase.id, r.id);
+          if (res.ok) { closeEvidenceSheet(); openEvidenceSheet(kase.id); }
+        };
+        // hold to preview the what-if on the map above
+        const mode = r.dismissed ? 'restore' : 'pull';
+        dm.addEventListener('pointerenter', () => redrawWhatIf(r, mode));
+        dm.addEventListener('pointerdown', () => redrawWhatIf(r, mode));
+        dm.addEventListener('pointerleave', () => redrawWhatIf(null));
+        dm.addEventListener('pointercancel', () => redrawWhatIf(null));
+        cell.appendChild(dm);
+      }
       grid.appendChild(cell);
     });
     sheet.appendChild(grid);
@@ -750,15 +909,27 @@ var UI = (() => {
     sheet.appendChild(h('div', 'evhint',
       'Compare each car with the best frame. Smudged plates and murky frames are weak; ⚠ frames cannot be the same vehicle. Tap a frame to see its pole.'));
 
-    const verdict = h('div', 'evverdict');
-    const cb = h('button', 'charge', 'CHARGE');
-    cb.setAttribute('data-key', 'ev-charge-' + kase.id);
-    cb.onclick = () => { GameAudio.unlock(); Actions.adjudicate(state, kase.id, 'CHARGE'); closeEvidenceSheet(); };
-    const rb = h('button', 'release', 'RELEASE');
-    rb.setAttribute('data-key', 'ev-release-' + kase.id);
-    rb.onclick = () => { GameAudio.unlock(); Actions.adjudicate(state, kase.id, 'RELEASE'); closeEvidenceSheet(); };
-    verdict.appendChild(cb); verdict.appendChild(rb);
-    sheet.appendChild(verdict);
+    if (kase.status === 'CONTESTED') {
+      const verdict = h('div', 'evverdict');
+      const cb = h('button', 'charge', 'CHARGE');
+      cb.setAttribute('data-key', 'ev-charge-' + kase.id);
+      cb.onclick = () => { GameAudio.unlock(); Actions.adjudicate(state, kase.id, 'CHARGE'); closeEvidenceSheet(); };
+      const rb = h('button', 'release', 'RELEASE');
+      rb.setAttribute('data-key', 'ev-release-' + kase.id);
+      rb.onclick = () => { GameAudio.unlock(); Actions.adjudicate(state, kase.id, 'RELEASE'); closeEvidenceSheet(); };
+      verdict.appendChild(cb); verdict.appendChild(rb);
+      sheet.appendChild(verdict);
+    } else {
+      sheet.appendChild(h('div', 'evhint',
+        'File building — a coherent chain of ' + CONFIG.Cases.READS_TO_CLOSE +
+        ' reads from ' + CONFIG.Cases.MIN_TRACK_CAMS + '+ cameras, anchored at the scene, makes the arrest.'));
+      const closer = h('div', 'evverdict');
+      const kb = h('button', 'release', 'BACK TO THE STREETS');
+      kb.setAttribute('data-key', 'ev-keep');
+      kb.onclick = () => closeEvidenceSheet();
+      closer.appendChild(kb);
+      sheet.appendChild(closer);
+    }
 
     sheet.querySelector('[data-key=ev-close]').onclick = () => closeEvidenceSheet();
     root.appendChild(sheet);
@@ -799,6 +970,12 @@ var UI = (() => {
     if (pick.kind === 'camera') {
       const cam = CameraSystem.byId(state, pick.id);
       if (!cam) return;
+      if (cam.type === 'OFFICER') {
+        const left = Math.max(0, Math.ceil(CONFIG.Cameras.OFFICER.TOUR_SECONDS - (state.time - cam.builtAt)));
+        identity('OFFICER POST — eyewitness reads file instantly · tour ends in ' + left + 's');
+        Renderer.flashSightline(cam.id);
+        return;
+      }
       const cond = cam.tags >= 2 ? 'LENS BADLY FOULED' : cam.tags === 1 ? 'LENS FOULED' : 'CLEAN';
       const link = CameraSystem.relayAdjacent(state, cam) ? 'RELAY-LINKED'
         : cam.drive.length + ' unsent · uploads in ' + Math.max(0, Math.ceil(CONFIG.Retention.UPLOAD_INTERVAL - (state.time - cam.lastUpload))) + 's';
@@ -844,12 +1021,13 @@ var UI = (() => {
     menu.setAttribute('data-key', 'ctxmenu');
 
     const colEyes = h('div', 'ctxcol', '<div class="colhead">EYES</div>');
-    for (const [type, ex] of [['POST', '2 blocks, one corner'], ['LONG', '5 blocks, one way'], ['DOME', 'this corner, all ways']]) {
+    for (const [type, ex] of [['POST', '2 blocks, one corner'], ['LONG', '5 blocks, one way'], ['DOME', 'this corner, all ways'], ['OFFICER', 'eyewitness, 45s tour']]) {
       const spec = CONFIG.Cameras[type];
       let refused = null;
       if (cam) refused = 'POLE OCCUPIED';
       else if (state.budget < spec.COST) refused = 'BUDGET SHORT ' + Math.ceil(spec.COST - state.budget);
-      const b = ctxButton('buy-' + type.toLowerCase(), 'CYCLOPS ' + type, spec.COST, ex, refused);
+      const b = ctxButton('buy-' + type.toLowerCase(),
+        type === 'OFFICER' ? 'OFFICER POST' : 'CYCLOPS ' + type, spec.COST, ex, refused);
       b.onclick = (e) => {
         e.stopPropagation(); GameAudio.unlock();
         if (refused) { identity(refused); GameAudio.sounds.deny(); return; }
@@ -884,7 +1062,8 @@ var UI = (() => {
         b.onclick = (e) => {
           e.stopPropagation(); GameAudio.unlock();
           if (refused) { identity(refused); GameAudio.sounds.deny(); return; }
-          Actions.upgrade(state, cam.id, key.toUpperCase() === 'CLEAN' ? 'CLEAN' : key.toUpperCase());
+          const r = Actions.upgrade(state, cam.id, key.toUpperCase() === 'CLEAN' ? 'CLEAN' : key.toUpperCase());
+          if (!r.ok) { identity(r.reason); GameAudio.sounds.deny(); return; }
           GameAudio.sounds.confirm();
           closeMenu();
         };

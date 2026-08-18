@@ -44,6 +44,29 @@ var Demo = (() => {
     return el && !el.getAttribute('data-refused');
   }
 
+  // a visible PRESS: the button depresses and flashes as the AI clicks it
+  function pressFx(el) {
+    if (!el) return;
+    el.classList.add('demopress');
+    setTimeout(() => { if (el.isConnected) el.classList.remove('demopress'); }, 160);
+    el.click();
+  }
+
+  // the demonstrator visibly reads the file: down through the frames,
+  // then back up to the verdict row
+  function scrollSheet(seconds) {
+    const sheet = document.querySelector('[data-key=evsheet]');
+    if (!sheet) return;
+    const max = sheet.scrollHeight - sheet.clientHeight;
+    if (max <= 0) return;
+    const t0 = performance.now();
+    const iv = setInterval(() => {
+      const k = (performance.now() - t0) / (seconds * 1000);
+      if (k >= 1 || !document.body.contains(sheet)) { clearInterval(iv); return; }
+      sheet.scrollTop = max * (k < 0.6 ? k / 0.6 : 1 - (k - 0.6) / 0.4);
+    }, 40);
+  }
+
   function stage(key, steps) {
     const D = CONFIG.Demo;
     let t = wall;
@@ -70,17 +93,45 @@ var Demo = (() => {
       const gr = CaseSystem.grade(state, ev);
       const charge = (avg / 100 + 0.15 * Math.min(ev.length, 4) - (gr.contradiction ? 0.35 : 0)) > STRAT.ADJ_BIAS;
       const btnKey = 'ev-' + (charge ? 'charge-' : 'release-') + contested.id;
-      // open the case file, visibly read the stills, then rule
+      // open the case file, visibly SCROLL through the frames, then rule
       stage('adjudicate', [
         { delay: 0.3, fn: () => UI.openEvidenceSheet(contested.id) },
-        { delay: 1.6, fn: () => lit(UI.getEl(btnKey)) },
+        { delay: 0.5, fn: () => scrollSheet(2.2) },
+        { delay: 2.6, fn: () => lit(UI.getEl(btnKey)) },
         { delay: D.HIGHLIGHT_S + 0.5, fn: () => {
           const el = UI.getEl(btnKey);
-          if (pressable(el)) el.click(); else UI.closeEvidenceSheet();
+          if (pressable(el)) pressFx(el); else UI.closeEvidenceSheet();
           unlight();
         } }
       ]);
       return;
+    }
+
+    // 1.5 tie an unidentified file to its strongest candidate, visibly
+    const untied = state.cases.find(c => c.status === 'OPEN' && c.plate === null &&
+      c._candPlates && Object.keys(c._candPlates).length && state.time - c.openedAt > 6);
+    if (untied && ok('identify')) {
+      const scores = {};
+      for (const r of state.reads) {
+        if (r.candidateOf === untied.id) scores[r.actualPlate] = (scores[r.actualPlate] || 0) + r.conf;
+      }
+      let bestPlate = null, bs = -1;
+      for (const p in scores) if (scores[p] > bs) { bs = scores[p]; bestPlate = p; }
+      if (bestPlate) {
+        const key = 'identify-' + untied.id + '-' + bestPlate;
+        stage('identify', [
+          { delay: 0.3, fn: () => UI.openEvidenceSheet(untied.id) },
+          { delay: 0.4, fn: () => scrollSheet(1.6) },
+          { delay: 1.9, fn: () => lit(UI.getEl(key)) },
+          { delay: D.PRESS_S + 0.4, fn: () => {
+            const el = UI.getEl(key);
+            if (pressable(el)) pressFx(el); else UI.closeEvidenceSheet();
+            unlight();
+          } },
+          { delay: 1.3, fn: () => UI.closeEvidenceSheet() }
+        ]);
+        return;
+      }
     }
 
     // 2. rain: move the dial down, visibly
@@ -114,7 +165,7 @@ var Demo = (() => {
       if (state.cameras.length >= 3) {
         const near = state.cameras.filter(c => c.type !== 'RELAY' &&
           CaseSystem.nodeDist(state, c.node, state.map.syndicate) <= CONFIG.Cases.ANCHOR_DIST).length;
-        if (near < 2) site = pickSiteNear(state.map.syndicate, 3);
+        if (near < 3) site = pickSiteNear(state.map.syndicate, 3);
       }
       if (!site) site = pickSite();
       if (site !== null) {
@@ -130,24 +181,65 @@ var Demo = (() => {
           { delay: D.HIGHLIGHT_S, fn: () => lit(UI.getEl(buyKey)) },
           { delay: D.PRESS_S + 0.3, fn: () => {
             const el = UI.getEl(buyKey);
-            if (pressable(el)) el.click(); else { UI.closeMenu(); blacklist.set('place', wall + CONFIG.Demo.BLACKLIST_S); }
+            if (pressable(el)) pressFx(el); else { UI.closeMenu(); blacklist.set('place', wall + CONFIG.Demo.BLACKLIST_S); }
             unlight();
           } }
         ];
         // aim the quadrant with visible TURN presses (fixed-sector doctrine)
         if (!relayTurn) {
           for (let t = 0; t < site.dir; t++) {
-            steps.push({ delay: 0.35, fn: () => { const el = UI.getEl('turn-cw'); if (el) { lit(el); el.click(); } } });
+            steps.push({ delay: 0.35, fn: () => { const el = UI.getEl('turn-cw'); if (el) { lit(el); pressFx(el); } } });
           }
         }
         steps.push({ delay: D.CONFIRM_S + 0.35, fn: () => lit(UI.getEl('confirm')) });
         steps.push({ delay: D.CONFIRM_S, fn: () => {
           const el = UI.getEl('confirm');
-          if (pressable(el)) el.click(); else { UI.cancelGhost(); blacklist.set('place', wall + CONFIG.Demo.BLACKLIST_S); }
+          if (pressable(el)) pressFx(el); else { UI.cancelGhost(); blacklist.set('place', wall + CONFIG.Demo.BLACKLIST_S); }
           unlight();
         } });
         stage('place', steps);
         return;
+      }
+    }
+
+    // 3.5 relocate a camera the crews have learned around — the §13
+    // counterplay, played through the real menu → RELOCATE → tap → CONFIRM
+    if (ok('relocate') && state.cameras.length >= 5 && state.budget > CONFIG.Cameras.POST.COST) {
+      const cutoff = state.time - 32;
+      const idle = state.cameras.find(c => c.type !== 'RELAY' &&
+        state.time - c.builtAt > 32 &&
+        !state.reads.some(r => r.camId === c.id && r.t > cutoff));
+      if (idle) {
+        const spot = pickSite();
+        if (spot && spot.node !== idle.node) {
+          stage('relocate', [
+            { delay: 0.2, fn: () => { if (Renderer.userIdleSeconds() > 6) Renderer.centerOn(idle.node); } },
+            { delay: 0.5, fn: () => {
+              const s = Renderer.nodeScreen(idle.node);
+              UI.openMenu(idle.node, s.x, s.y);
+            } },
+            { delay: D.HIGHLIGHT_S, fn: () => lit(UI.getEl('relocate')) },
+            { delay: D.PRESS_S + 0.3, fn: () => {
+              const el = UI.getEl('relocate');
+              if (pressable(el)) pressFx(el); else { UI.closeMenu(); blacklist.set('relocate', wall + CONFIG.Demo.BLACKLIST_S); }
+              unlight();
+            } },
+            { delay: 0.5, fn: () => {           // tap the new pole
+              const s = Renderer.nodeScreen(spot.node);
+              UI.simulateTapAt(s.x, s.y);
+            } },
+            ...Array.from({ length: spot.dir }, () => (
+              { delay: 0.3, fn: () => { const el = UI.getEl('turn-cw'); if (el) { lit(el); pressFx(el); } } }
+            )),
+            { delay: D.CONFIRM_S + 0.3, fn: () => lit(UI.getEl('confirm')) },
+            { delay: D.CONFIRM_S, fn: () => {
+              const el = UI.getEl('confirm');
+              if (pressable(el)) pressFx(el); else UI.cancelGhost();
+              unlight();
+            } }
+          ]);
+          return;
+        }
       }
     }
 
@@ -160,7 +252,7 @@ var Demo = (() => {
         { delay: D.HIGHLIGHT_S, fn: () => lit(UI.getEl('clean')) },
         { delay: D.PRESS_S + 0.3, fn: () => {
           const el = UI.getEl('clean');
-          if (pressable(el)) el.click(); else { UI.closeMenu(); blacklist.set('clean', wall + CONFIG.Demo.BLACKLIST_S); }
+          if (pressable(el)) pressFx(el); else { UI.closeMenu(); blacklist.set('clean', wall + CONFIG.Demo.BLACKLIST_S); }
           unlight();
         } }
       ]);

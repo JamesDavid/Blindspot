@@ -218,27 +218,41 @@ var Renderer = (() => {
       if (rng() < 0.1) continue;                 // vacant lot
       const district = map.districts ? map.districts[y * map.W + x] : 'HOUSES';
       if (district === 'HOUSES' || district === 'SYNDICATE') {
-        const cnt = 2 + (rng() < 0.5 ? 1 : 0);   // small pitched-roof houses
+        // three house archetypes: simple, L-shaped, and with a garage
+        const cnt = 2 + (rng() < 0.5 ? 1 : 0);
+        const roofMats = [houseRoofMat,
+          new THREE.MeshLambertMaterial({ color: 0x1d2419 }),
+          new THREE.MeshLambertMaterial({ color: 0x261a1a })];
         for (let i = 0; i < cnt; i++) {
-          const hw = 0.16 + rng() * 0.08, hh = 0.12 + rng() * 0.08;
+          const hw = 0.15 + rng() * 0.08, hh = 0.12 + rng() * 0.08;
           const hx = x + 0.24 + rng() * 0.5, hz = y + 0.24 + rng() * 0.5;
+          const kind2 = rng();
           const body = new THREE.Mesh(new THREE.BoxGeometry(hw, hh, hw), houseMat);
           body.position.set(hx, hh / 2, hz);
           mapGroup.add(body);
-          const roof = new THREE.Mesh(new THREE.ConeGeometry(hw * 0.78, 0.09, 4), houseRoofMat);
+          const rm = roofMats[Math.floor(rng() * roofMats.length)];
+          const roof = new THREE.Mesh(new THREE.ConeGeometry(hw * 0.78, 0.07 + rng() * 0.05, 4), rm);
           roof.rotation.y = Math.PI / 4;
-          roof.position.set(hx, hh + 0.045, hz);
+          roof.position.set(hx, hh + 0.04, hz);
           mapGroup.add(roof);
-          if (rng() < 0.6) {   // a warm porch light
-            const pl = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.03, 0.006),
-              winMats[0]);
+          if (kind2 < 0.35) {           // L-wing
+            const wing = new THREE.Mesh(new THREE.BoxGeometry(hw * 0.7, hh * 0.8, hw * 0.55), houseMat);
+            wing.position.set(hx + hw * 0.62, hh * 0.4, hz + hw * 0.2);
+            mapGroup.add(wing);
+          } else if (kind2 < 0.6) {     // flat-roofed garage
+            const gar = new THREE.Mesh(new THREE.BoxGeometry(hw * 0.6, hh * 0.55, hw * 0.6), bMats[0]);
+            gar.position.set(hx - hw * 0.72, hh * 0.28, hz);
+            mapGroup.add(gar);
+          }
+          if (rng() < 0.6) {            // a warm porch light
+            const pl = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.03, 0.006), winMats[0]);
             pl.position.set(hx + (rng() - 0.5) * hw * 0.5, hh * 0.45, hz + hw / 2 + 0.004);
             mapGroup.add(pl);
           }
         }
       } else if (district === 'APARTMENTS') {
-        const bw = 0.34 + rng() * 0.18, bd = 0.3 + rng() * 0.16;
-        const bh = 0.38 + rng() * 0.3;
+        const bw = 0.32 + rng() * 0.2, bd = 0.3 + rng() * 0.16;
+        const bh = 0.34 + rng() * 0.38;
         const bx = x + 0.3 + rng() * 0.35, bz = y + 0.3 + rng() * 0.35;
         const bm = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), bMats[Math.floor(rng() * 2)]);
         bm.position.set(bx, bh / 2, bz);
@@ -248,17 +262,52 @@ var Renderer = (() => {
           ledge.position.set(bx, bh * l / 3, bz);
           mapGroup.add(ledge);
         }
+        const flavor = rng();
+        if (flavor < 0.35) {            // stairwell tower on the roof
+          const st = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.28, 0.1, bd * 0.3), roofMat);
+          st.position.set(bx + bw * 0.25, bh + 0.05, bz - bd * 0.2);
+          mapGroup.add(st);
+        } else if (flavor < 0.6) {      // row of rooftop AC units
+          for (let a2 = 0; a2 < 3; a2++) {
+            const ac = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.025, 0.035), roofMat);
+            ac.position.set(bx - bw * 0.3 + a2 * bw * 0.3, bh + 0.013, bz + bd * 0.2);
+            mapGroup.add(ac);
+          }
+        } else if (flavor < 0.75) {     // a corner shop at street level
+          const shop = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.9, 0.02, 0.05),
+            new THREE.MeshBasicMaterial({ color: [0x7a5a8a, 0x5a7a6a, 0x8a6a4a][Math.floor(rng() * 3)] }));
+          shop.position.set(bx, 0.1, bz + bd / 2 + 0.02);
+          mapGroup.add(shop);
+        }
         addWindows(bx, bh, bz, bw, bd, 2 + Math.floor(rng() * 3));
-      } else {                                    // DOWNTOWN / OFFICE ring: towers
+      } else {                                    // DOWNTOWN / OFFICE ring: tower archetypes
         const cnt = 1 + (rng() < 0.35 ? 1 : 0);
         for (let i = 0; i < cnt; i++) {
           const bw = 0.24 + rng() * 0.18, bd = 0.24 + rng() * 0.18;
-          const bh = 0.7 + rng() * 1.1;
+          const bh = 0.65 + rng() * 1.15;
           const bx = x + 0.28 + rng() * (0.44 - bw / 2), bz = y + 0.28 + rng() * (0.44 - bd / 2);
-          const bm = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), towerMat);
-          bm.position.set(bx, bh / 2, bz);
-          mapGroup.add(bm);
-          addWindows(bx, bh, bz, bw, bd, 3 + Math.floor(rng() * 4));
+          const arch = rng();
+          if (arch < 0.4) {             // stepped setback tower
+            const base = new THREE.Mesh(new THREE.BoxGeometry(bw, bh * 0.6, bd), towerMat);
+            base.position.set(bx, bh * 0.3, bz);
+            mapGroup.add(base);
+            const top = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.65, bh * 0.45, bd * 0.65), towerMat);
+            top.position.set(bx, bh * 0.6 + bh * 0.22, bz);
+            mapGroup.add(top);
+            addWindows(bx, bh * 0.6, bz, bw, bd, 3);
+          } else if (arch < 0.6) {      // round tower with a crown
+            const cyl = new THREE.Mesh(new THREE.CylinderGeometry(bw * 0.45, bw * 0.5, bh, 10), towerMat);
+            cyl.position.set(bx, bh / 2, bz);
+            mapGroup.add(cyl);
+            const crown = new THREE.Mesh(new THREE.CylinderGeometry(bw * 0.5, bw * 0.45, 0.03, 10), roofMat);
+            crown.position.set(bx, bh + 0.015, bz);
+            mapGroup.add(crown);
+          } else {                      // slab
+            const bm = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), towerMat);
+            bm.position.set(bx, bh / 2, bz);
+            mapGroup.add(bm);
+            addWindows(bx, bh, bz, bw, bd, 3 + Math.floor(rng() * 4));
+          }
           if (rng() < 0.6) {
             const v = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.25, 0.08, bd * 0.25), roofMat);
             v.position.set(bx + (rng() - 0.5) * bw * 0.4, bh + 0.04, bz + (rng() - 0.5) * bd * 0.4);
@@ -268,19 +317,57 @@ var Renderer = (() => {
       }
     }
 
-    // signature landmarks with signs
+    // every part of town gets its name, not just the landmarks
+    // (player-directed): muted labels so they never compete with signals
+    const addDistrictLabel = (nodeIdx, text) => {
+      if (nodeIdx === undefined || nodeIdx < 0) return;
+      const n = map.nodes[nodeIdx];
+      const sp = textSprite(text, '#7d8798', 'rgba(8,10,14,0.72)');
+      sp.scale.set(0.62, 0.17, 1);
+      sp.position.set(n.x, 0.42, n.y);
+      mapGroup.add(sp);
+    };
+    if (map.districts) {
+      const byDistrict = (tag, pick) => {
+        const cands = map.nodes.filter(n => map.districts[n.id] === tag && map.adj[n.id].length);
+        if (!cands.length) return -1;
+        return pick(cands).id;
+      };
+      addDistrictLabel(map.center, 'DOWNTOWN');
+      addDistrictLabel(map.syndicate, 'SYNDICATE BLOCK');
+      addDistrictLabel(byDistrict('APARTMENTS', c => c.reduce((m, n) => n.y < m.y ? n : m, c[0])), 'APARTMENTS');
+      addDistrictLabel(byDistrict('APARTMENTS', c => c.reduce((m, n) => n.y > m.y ? n : m, c[0])), 'APARTMENTS');
+      addDistrictLabel(byDistrict('HOUSES', c => c.reduce((m, n) => n.y < m.y ? n : m, c[0])), 'ROW HOUSES');
+      addDistrictLabel(byDistrict('HOUSES', c => c.reduce((m, n) => n.y > m.y ? n : m, c[0])), 'ROW HOUSES');
+    }
+
+    // signature landmarks that LOOK like their labels (player-directed)
     for (const p of poiDefs) {
       const bx = p.x + 0.5, bz = p.y + 0.5;
       if (p.kind === 'BANK') {
         const hall = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.3, 0.4),
-          new THREE.MeshLambertMaterial({ color: 0x3a3830 }));
+          new THREE.MeshLambertMaterial({ color: 0x403d33 }));
         hall.position.set(bx, 0.15, bz);
         mapGroup.add(hall);
+        // pediment over the columns, and steps down to the street
+        const ped = new THREE.Mesh(new THREE.CylinderGeometry(0, 0.3, 0.1, 3),
+          new THREE.MeshLambertMaterial({ color: 0x555142 }));
+        ped.rotation.z = Math.PI / 2;
+        ped.rotation.y = Math.PI / 2;
+        ped.scale.set(1, 1, 0.4);
+        ped.position.set(bx, 0.33, bz - 0.16);
+        mapGroup.add(ped);
         for (let c = -1; c <= 1; c++) {
-          const col = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.22, 6),
-            new THREE.MeshLambertMaterial({ color: 0x555142 }));
-          col.position.set(bx + c * 0.16, 0.11, bz - 0.24);
+          const col = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.24, 6),
+            new THREE.MeshLambertMaterial({ color: 0x5c5847 }));
+          col.position.set(bx + c * 0.16, 0.12, bz - 0.24);
           mapGroup.add(col);
+        }
+        for (let s2 = 0; s2 < 3; s2++) {
+          const step = new THREE.Mesh(new THREE.BoxGeometry(0.5 - s2 * 0.06, 0.016, 0.06),
+            new THREE.MeshLambertMaterial({ color: 0x4a463a }));
+          step.position.set(bx, 0.008 + s2 * 0.016, bz - 0.3 - s2 * 0.03);
+          mapGroup.add(step);
         }
         addSign(bx, 0.52, bz, 'BANK', '#e8d48a');
       } else if (p.kind === 'GROCERY') {
@@ -288,17 +375,58 @@ var Renderer = (() => {
           new THREE.MeshLambertMaterial({ color: 0x27302b }));
         store.position.set(bx, 0.07, bz);
         mapGroup.add(store);
+        // lit storefront band + a little parking with parked cars
+        const front = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.05, 0.006),
+          new THREE.MeshBasicMaterial({ color: 0xbfd9a8 }));
+        front.position.set(bx, 0.05, bz + 0.234);
+        mapGroup.add(front);
+        const lot = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.006, 0.2),
+          new THREE.MeshLambertMaterial({ color: 0x22252c }));
+        lot.position.set(bx, 0.003, bz + 0.36);
+        mapGroup.add(lot);
+        for (let pc = 0; pc < 2 + Math.floor(rng() * 2); pc++) {
+          const parked = buildVehicle({ plate: 'PARK' + Math.floor(rng() * 999) + p.x + '' + pc, id: -1 });
+          parked.scale.setScalar(0.85);
+          parked.rotation.y = Math.PI / 2 + (rng() - 0.5) * 0.1;
+          parked.position.set(bx - 0.2 + pc * 0.17, 0, bz + 0.36);
+          parked.traverse(o => { if (o.material && o.material.color && o.geometry &&
+            o.geometry.type === 'ConeGeometry') o.visible = false; });   // no headlight cones while parked
+          mapGroup.add(parked);
+        }
         addSign(bx, 0.36, bz, 'GROCERY', '#9fd9a3');
       } else if (p.kind === 'OFFICE') {
         const tower = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.5, 0.3), towerMat);
         tower.position.set(bx, 0.75, bz);
         mapGroup.add(tower);
+        // glass curtain: stacked lit window rows + a lobby band
+        for (let f = 0; f < 7; f++) addWindows(bx, 1.45, bz, 0.3, 0.3, 2);
+        const lobby = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.05, 0.006),
+          new THREE.MeshBasicMaterial({ color: 0x9ab4d9 }));
+        lobby.position.set(bx, 0.05, bz + 0.154);
+        mapGroup.add(lobby);
         const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.22, 4),
           new THREE.MeshBasicMaterial({ color: 0x8b93a5 }));
         mast.position.set(bx, 1.6, bz);
         mapGroup.add(mast);
         addSign(bx, 1.78, bz, 'OFFICES', '#9ab4d9');
       }
+    }
+    // the syndicate block reads as what it is: a dark warehouse, lights off
+    {
+      const sn = map.nodes[map.syndicate];
+      const wx = clamp(sn.x, 0, map.W - 2) + 0.5, wz = clamp(sn.y, 0, map.H - 2) + 0.5;
+      const wh = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.2, 0.42),
+        new THREE.MeshLambertMaterial({ color: 0x191b1c }));
+      wh.position.set(wx, 0.1, wz);
+      mapGroup.add(wh);
+      const roofRidge = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.03, 0.08),
+        new THREE.MeshLambertMaterial({ color: 0x121415 }));
+      roofRidge.position.set(wx, 0.215, wz);
+      mapGroup.add(roofRidge);
+      const door = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.006),
+        new THREE.MeshLambertMaterial({ color: 0x24272a }));
+      door.position.set(wx, 0.06, wz + 0.214);
+      mapGroup.add(door);
     }
     scene.add(mapGroup);
   }
@@ -405,6 +533,25 @@ var Renderer = (() => {
       ring.rotation.x = Math.PI / 2;
       ring.position.y = 0.58;
       g.add(ring);
+    } else if (cam.type === 'OFFICER') {
+      // no pole: a uniform standing the corner
+      g.remove(pole);
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.065, 0.16, 8),
+        new THREE.MeshLambertMaterial({ color: 0x2e3a55 }));
+      body.position.y = 0.08;
+      g.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6),
+        new THREE.MeshLambertMaterial({ color: 0x8a7862 }));
+      head.position.y = 0.185;
+      g.add(head);
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.048, 0.02, 8),
+        new THREE.MeshLambertMaterial({ color: 0x232c42 }));
+      cap.position.y = 0.215;
+      g.add(cap);
+      const badge = new THREE.Mesh(new THREE.SphereGeometry(0.012, 6, 5),
+        new THREE.MeshBasicMaterial({ color: 0xffd98a }));
+      badge.position.set(0.03, 0.11, 0.045);
+      g.add(badge);
     } else if (cam.type === 'RELAY') {
       const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.02, 0.3, 5), poleMat);
       mast.position.y = 0.68;
@@ -552,16 +699,34 @@ var Renderer = (() => {
     shadow.position.y = 0.004;
     shadow.scale.z = 0.62;
     g.add(shadow);
-    // lit headlights and taillights read direction of travel instantly
+    // lit headlights and taillights read direction of travel instantly —
+    // and a car's damage traits show on the model itself, so the case
+    // file's photos and the witness's description share one truth
     const hlMat = new THREE.MeshBasicMaterial({ color: 0xffe9b0 });
     const tlMat = new THREE.MeshBasicMaterial({ color: 0xc2483c });
+    const deadMat = new THREE.MeshBasicMaterial({ color: 0x3a2224 });
+    const brokenTl = ident.damage.includes('BROKEN TAILLIGHT');
     for (const s of [-1, 1]) {
       const hl = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.014, 0.02), hlMat);
       hl.position.set(d.l / 2, d.h * 0.55, s * d.w * 0.3);
       g.add(hl);
-      const tl = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.012, 0.018), tlMat);
+      const tl = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.012, 0.018),
+        brokenTl && s === 1 ? deadMat : tlMat);
       tl.position.set(-d.l / 2, d.h * 0.55, s * d.w * 0.3);
       g.add(tl);
+    }
+    if (ident.damage.includes('DENTED PANEL')) {
+      const dent = new THREE.Mesh(new THREE.BoxGeometry(d.l * 0.28, d.h * 0.5, 0.004),
+        new THREE.MeshLambertMaterial({ color: 0x14161a }));
+      dent.position.set(d.l * 0.08, d.h * 0.5, d.w / 2 + 0.002);
+      g.add(dent);
+    }
+    if (ident.damage.includes('CRACKED WINDSHIELD')) {
+      const crack = new THREE.Mesh(new THREE.BoxGeometry(0.003, 0.02, d.w * 0.5),
+        new THREE.MeshBasicMaterial({ color: 0xd8e0ec, transparent: true, opacity: 0.7 }));
+      crack.position.set(d.l * 0.22, d.h + 0.012, 0);
+      crack.rotation.y = 0.3;
+      g.add(crack);
     }
     const cone = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.34, 8, 1, true),
       new THREE.MeshBasicMaterial({
@@ -582,8 +747,9 @@ var Renderer = (() => {
     const b = nodePos(map, veh.path[veh.at + 1]);
     const t = veh.segT;
     const dx = b.x - a.x, dz = b.z - a.z;
-    // drive on the right: offset perpendicular to travel
-    const ox = dz * 0.07, oz = -dx * 0.07;
+    // right-hand traffic (player-directed): the driver's right of travel
+    // direction (dx,dz) is (-dz,dx) with x east and z south
+    const ox = -dz * 0.07, oz = dx * 0.07;
     return { x: a.x + dx * t + ox, z: a.z + dz * t + oz, ang: Math.atan2(dz, dx) };
   }
 
@@ -766,6 +932,37 @@ var Renderer = (() => {
     }
   }
 
+  // A word bubble pops where the crime was reported (player-directed):
+  // the witness's own words, floating over the scene.
+  function wordBubble(state, node, text, dur) {
+    const lines = text.split('\n');
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 40 + lines.length * 42;
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgba(14,17,24,0.94)';
+    g.beginPath(); g.roundRect(4, 4, 504, c.height - 26, 16); g.fill();
+    g.strokeStyle = '#ffc84a'; g.lineWidth = 3; g.stroke();
+    // the tail
+    g.fillStyle = 'rgba(14,17,24,0.94)';
+    g.beginPath();
+    g.moveTo(236, c.height - 24); g.lineTo(276, c.height - 24); g.lineTo(256, c.height - 2);
+    g.closePath(); g.fill();
+    g.font = 'bold 30px "Segoe UI", Arial, sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = '#f2e8c8';
+    lines.forEach((l, i) => g.fillText(l, 256, 26 + i * 40));
+    const tex = new THREE.CanvasTexture(c);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+    const scale = 1.7;
+    sp.scale.set(scale, scale * c.height / 512, 1);
+    const p = nodePos(state.map, node);
+    sp.position.set(p.x, 0.75, p.z);
+    addFx(sp, dur || 4.5, (f, k) => {
+      f.mesh.position.y = 0.75 + k * 0.25;
+      f.mesh.material.opacity = k < 0.12 ? k / 0.12 : k > 0.8 ? (1 - k) / 0.2 : 1;
+    });
+  }
+
   function crimeIcon(state, node, color, dur) {
     const sp = textSprite('!', '#111', null);
     // diamond backing
@@ -829,7 +1026,10 @@ var Renderer = (() => {
           break;
         }
         case 'crime': crimeIcon(state, ev.node, V.RED, 6); break;
-        case 'tip': if (ev.early) crimeIcon(state, ev.node, V.CYAN, 5); break;
+        case 'tip':
+          if (ev.bubble) wordBubble(state, ev.node, ev.bubble, 4.5);
+          else if (ev.early) crimeIcon(state, ev.node, V.CYAN, 5);
+          break;
         case 'arrest': {
           const node = ev.node !== undefined ? ev.node
             : (state.cases.find(c => c.id === ev.caseId) || {}).spawnNode;
@@ -923,6 +1123,72 @@ var Renderer = (() => {
     tutorialRing.rotation.x = -Math.PI / 2;
     tutorialRing.position.set(p.x, 0.06, p.z);
     scene.add(tutorialRing);
+  }
+
+  // ---------- the Cyclops lens: real 3D stills for the case file ----------
+  // Each frame is rendered from the photographing camera's own head, into
+  // the live scene, with the ACTUAL vehicle placed on the read's segment.
+  // Non-diegetic layers (coverage, fx, markers, live traffic) are hidden
+  // for the exposure; the UI applies confidence-degradation post on top.
+
+  let stillRenderer = null, stillCam = null;
+
+  function captureStill(read) {
+    if (!curState || !renderer || read.camNode === undefined) return null;
+    const map = curState.map;
+    const seg = map.segs[read.segId];
+    if (!seg) return null;
+    if (!stillRenderer) {
+      const cv = document.createElement('canvas');
+      cv.width = 704; cv.height = 352;
+      stillRenderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true, preserveDrawingBuffer: true });
+      stillRenderer.setPixelRatio(1);
+      stillCam = new THREE.PerspectiveCamera(55, cv.width / cv.height, 0.05, 40);
+    }
+
+    // the subject: the car that was genuinely photographed (or the hooded
+    // figure at the pole, for a witness frame)
+    let subject;
+    const a = nodePos(map, seg.a), b = nodePos(map, seg.b);
+    if (read.vehId !== null) {
+      subject = buildVehicle({ plate: read.actualPlate, id: -1 });
+      const HD = [[1, 0], [0, 1], [-1, 0], [0, -1]][read.heading || 0];
+      // on its correct (right-hand) side of the street in the photo too
+      subject.position.set(
+        a.x + (b.x - a.x) * 0.5 - HD[1] * 0.07, 0,
+        a.z + (b.z - a.z) * 0.5 + HD[0] * 0.07);
+      subject.rotation.y = -Math.atan2(HD[1], HD[0]);
+    } else {
+      subject = buildVandal({ id: -1, type: 'FIXER' });
+      const n = read.subjectNode !== undefined ? nodePos(map, read.subjectNode) : { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
+      subject.position.set(n.x - 0.15, 0, n.z - 0.15);
+    }
+    scene.add(subject);
+
+    // shoot from over the intersection itself (the pole's head hangs out
+    // over the street — a lens buried in the block would photograph
+    // rooftops), zoomed so the subject fills the frame at any distance
+    const cn = nodePos(map, read.camNode);
+    stillCam.position.set(cn.x, 0.55, cn.z);
+    const dist = Math.hypot(subject.position.x - cn.x, subject.position.z - cn.z) || 0.5;
+    stillCam.fov = clamp(2 * Math.atan(0.42 / dist) * 180 / Math.PI, 16, 48);
+    stillCam.updateProjectionMatrix();
+    stillCam.lookAt(subject.position.x, 0.06, subject.position.z);
+    const flood = new THREE.PointLight(0xc8d8ee, 1.6, 6);
+    flood.position.set(cn.x, 0.8, cn.z);
+    scene.add(flood);
+
+    const hidden = [overlayGroup, fxGroup, caseGroup, vehGroup, vandalGroup,
+      selectedRing, tutorialRing, ghost, rainSys].filter(Boolean);
+    const prior = hidden.map(o => o.visible);
+    hidden.forEach(o => { o.visible = false; });
+
+    stillRenderer.render(scene, stillCam);
+
+    hidden.forEach((o, i) => { o.visible = prior[i]; });
+    scene.remove(subject);
+    scene.remove(flood);
+    return stillRenderer.domElement;
   }
 
   // ---------- picking & projection ----------
@@ -1114,7 +1380,7 @@ var Renderer = (() => {
     clearGhost,
     setSelected: (n) => setSelected(curState, n),
     setTutorialRing: (n) => setTutorialRing(curState, n),
-    markOverlayDirty,
+    markOverlayDirty, captureStill,
     // tap a camera and its whole sightline lights for a beat — the
     // fastest way to teach what one unit actually holds
     flashSightline: (camId) => {

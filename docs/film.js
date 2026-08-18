@@ -28,7 +28,7 @@ fs.mkdirSync(OUT, { recursive: true });
 
   const t0 = Date.now();
   let verdict = null;
-  while (Date.now() - t0 < 150000) {
+  while (Date.now() - t0 < 260000) {
     await page.waitForTimeout(1000);
     verdict = await page.evaluate(() => window.__game.state.verdict &&
       (window.__game.state.verdict.result + '/' + window.__game.state.verdict.reason));
@@ -46,16 +46,16 @@ fs.mkdirSync(OUT, { recursive: true });
   console.log('raw video:', webm);
 
   const mp4 = path.join(OUT, 'shift_timelapse.mp4');
-  execSync(`ffmpeg -y -i "${webm}" -c:v libx264 -pix_fmt yuv420p -crf 23 -movflags +faststart "${mp4}"`, { stdio: 'inherit' });
+  execSync(`ffmpeg -y -i "${webm}" -c:v libx264 -pix_fmt yuv420p -crf 26 -movflags +faststart "${mp4}"`, { stdio: 'inherit' });
 
-  // teaser gif: the final 22 seconds (strike-era play into the verdict),
-  // palette-optimized, 12fps at width 260, under the 5MB cap
+  // teaser gif: the final 18 seconds into the verdict, palette-optimized,
+  // 10fps at width 240 — must land under the 5MB gallery cap
   const dur = parseFloat(execSync(`ffprobe -v error -show_entries format=duration -of csv=p=0 "${mp4}"`).toString());
-  const start = Math.max(0, dur - 22);
+  const start = Math.max(0, dur - 14);
   const gif = path.join(OUT, 'shift_teaser.gif');
   const pal = path.join(OUT, '_pal.png');
-  execSync(`ffmpeg -y -ss ${start.toFixed(1)} -t 22 -i "${mp4}" -vf "fps=12,scale=260:-1:flags=lanczos,palettegen" "${pal}"`, { stdio: 'inherit' });
-  execSync(`ffmpeg -y -ss ${start.toFixed(1)} -t 22 -i "${mp4}" -i "${pal}" -lavfi "fps=12,scale=260:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer" "${gif}"`, { stdio: 'inherit' });
+  execSync(`ffmpeg -y -ss ${start.toFixed(1)} -t 14 -i "${mp4}" -vf "fps=10,scale=220:-1:flags=lanczos,palettegen" "${pal}"`, { stdio: 'inherit' });
+  execSync(`ffmpeg -y -ss ${start.toFixed(1)} -t 14 -i "${mp4}" -i "${pal}" -lavfi "fps=10,scale=220:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer" "${gif}"`, { stdio: 'inherit' });
   fs.rmSync(pal, { force: true });
   fs.rmSync(webm, { force: true });
   console.log(`mp4 ${(fs.statSync(mp4).size / 1e6).toFixed(1)}MB, gif ${(fs.statSync(gif).size / 1e6).toFixed(1)}MB`);

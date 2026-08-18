@@ -44,7 +44,7 @@ var CameraSystem = (() => {
     };
     cam.sight = Sightlines.compute(state.map, nodeIdx, type, cam.dir);
     state.cameras.push(cam);
-    state.stats.built++;
+    if (type !== 'OFFICER') state.stats.built++;   // tours don't count against network integrity
     Sightlines.rebuildCoverage(state);
     State.emit(state, { type: 'placed', camId: cam.id, node: nodeIdx, unit: type });
     return { ok: true, cam };
@@ -75,6 +75,7 @@ var CameraSystem = (() => {
   Actions.upgrade = function (state, camId, kind) {
     const cam = byId(state, camId);
     if (!cam) return { ok: false, reason: 'NO SUCH UNIT' };
+    if (cam.type === 'OFFICER') return { ok: false, reason: 'THE OFFICER IS FINE' };
     const cost = CONFIG.Upgrades[kind];
     if (cost === undefined) return { ok: false, reason: 'NO SUCH WORK' };
     if (kind === 'HARDEN' && cam.hardened) return { ok: false, reason: 'ALREADY HARDENED' };
@@ -102,8 +103,8 @@ var CameraSystem = (() => {
     read.uploadedAt = null;
     read.lost = false;
     state.reads.push(read);
-    if (relayAdjacent(state, cam)) {
-      read.uploadedAt = state.time;    // relay neighbours upload continuously
+    if (cam.type === 'OFFICER' || relayAdjacent(state, cam)) {
+      read.uploadedAt = state.time;    // eyewitness testimony and relay links file instantly
       read.expiresAt = state.time + retentionWindow(cam);
     } else {
       cam.drive.push(read.id);
@@ -152,6 +153,18 @@ var CameraSystem = (() => {
   function tick(state, dt) {
     for (const cam of state.cameras) {
       if (state.time - cam.lastUpload >= CONFIG.Retention.UPLOAD_INTERVAL) upload(state, cam);
+    }
+    // officers rotate off when the tour ends — nothing is lost (their
+    // testimony filed instantly), the corner just goes dark again
+    const expired = state.cameras.filter(c =>
+      c.type === 'OFFICER' && state.time - c.builtAt >= CONFIG.Cameras.OFFICER.TOUR_SECONDS);
+    if (expired.length) {
+      state.cameras = state.cameras.filter(c => !expired.includes(c));
+      Sightlines.rebuildCoverage(state);
+      for (const c of expired) {
+        State.emit(state, { type: 'officerOff', node: c.node });
+        State.log(state, 'Tour over — the officer at intersection ' + c.node + ' rotated off.', 'first-officer-off');
+      }
     }
   }
 

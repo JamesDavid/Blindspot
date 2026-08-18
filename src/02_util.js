@@ -112,6 +112,21 @@ function witnessDescription(identity, r1, r2) {
   return color + ' ' + type;
 }
 
+// Does a photographed car fit what the witness said? The description is
+// "COLOR TYPE" where colour may be vague (DARK / LIGHT-COLORED) and type
+// may be just CAR.
+function descriptionMatches(desc, identity) {
+  if (!desc) return false;
+  const firstSpace = desc.indexOf(' ');
+  const colorWord = desc.slice(0, firstSpace);
+  const typeWord = desc.slice(firstSpace + 1);
+  const colorOK = colorWord === identity.color.name ||
+    (colorWord === 'DARK' && identity.color.tone === 'DARK') ||
+    (colorWord === 'LIGHT-COLORED' && identity.color.tone === 'LIGHT');
+  const typeOK = typeWord === 'CAR' || typeWord === identity.type;
+  return colorOK && typeOK;
+}
+
 // Threshold band label for a value, from CONFIG bands [[min,label],...].
 function bandLabel(bands, v) {
   let label = bands[0][1];

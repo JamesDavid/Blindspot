@@ -13,3 +13,4 @@
 11. `11_casefile` — The case file: a still for every read. One of these cars is not like the others.
 12. `12_districts` — A city you can read: the bank, the grocery, the office tower, row houses at the fringe.
 13. `13_quadrant_ghost` — Quadrant aiming: the Post watches one corner, forever. Turn it before you pay.
+14. `14_lineup` — No plate, just "a DARK SUV". Real photos of the candidates — which car is it?

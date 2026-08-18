@@ -22,7 +22,7 @@
 <script>
 'use strict';
 /* BLIND SPOT — a camera-network tower defense prototype. */
-window.BUILDSTAMP = 'BUILD 2026-08-18 03:46 UTC';
+window.BUILDSTAMP = 'BUILD 2026-08-18 04:54 UTC';
 
 // ============================================================
 // CONFIG
@@ -71,6 +71,10 @@ var CONFIG = Object.freeze({
     ANCHOR_DIST: 6,                 // player-directed: the chain starts AT the scene — the earliest closing read must come from a camera within this many blocks of the crime; the last read is where they're taken down
     SECOND_RUN_AT: 0.4,             // fraction of the lifetime after which the suspect is seen driving again — without a second pass, one crime could never produce a multi-camera track
     ENGAGED_AT: 2,                  // player-directed-era rebalance: clearance judges files the network actually worked (≥ this many reads, or a surfaced card); a file with no real lead lapses quietly — the city is bigger than the network
+    UNIDENTIFIED_CHANCE: 0.3,       // player-directed: some witnesses catch no plate — "brown SUV with damage robbed the bank!" — and the file opens on the description alone (0.35 collapsed the census win rate)
+    IDENTIFY_EXTEND: 0.6,           // tying the file renews it by this fraction of a lifetime — the investigation properly starts at the lineup, not the crime
+    CANDIDATE_DIST: 5,              // player-directed: clearly-photographed cars matching the description within this many blocks of the scene become candidates
+    CANDIDATE_MAX: 4,               // player-directed: at most this many distinct candidate plates per file — a lineup, not a phonebook
     CLOSURE_CONFIDENCE_SUM: 210,    // spec-authored: three serviceable reads or two clean ones plus a poor one
     LIFETIME_SECONDS: 90,           // re-swept (test/opt_lifetime.js) after quadrant cameras: 90x3 (51.0) now clearly beats 75x3 (41.2) — narrower sectors need longer files; the optimum moved with the mechanics again
     CONTESTED_BAND: 12,             // judgment-tuned: width of the near-bar band that surfaces a card
@@ -94,6 +98,7 @@ var CONFIG = Object.freeze({
     LONG:  { COST: 60, RANGE: 5, DIRECTIONS: 1, CONF_MOD: 10 },   // spec-authored: aimed at placement, forever
     DOME:  { COST: 55, RANGE: 1, DIRECTIONS: 4, CONF_MOD: -8 },   // spec-authored: many angles, poor reads
     RELAY: { COST: 35, RANGE: 0, DIRECTIONS: 0, CONF_MOD: 0 },    // spec-authored: continuous upload for neighbours, nothing else
+    OFFICER: { COST: 55, RANGE: 1, DIRECTIONS: 4, CONF_MOD: 6, TOUR_SECONDS: 45 }, // player-directed: post an officer instead of a camera — pricier per minute of coverage, one corner only, eyewitness reads file instantly (no drive to lose), vandals leave the uniform alone, and the tour ENDS. Camera-free play is possible; it just costs like overtime pay.
     RELOCATE_COST_FRACTION: 0.5     // spec-authored: relocation is a routine move, not a last resort
   },
 
@@ -371,6 +376,21 @@ function witnessDescription(identity, r1, r2) {
   const color = r1 < 0.7 ? identity.color.name : (identity.color.tone === 'DARK' ? 'DARK' : 'LIGHT-COLORED');
   const type = r2 < 0.75 ? identity.type : 'CAR';
   return color + ' ' + type;
+}
+
+// Does a photographed car fit what the witness said? The description is
+// "COLOR TYPE" where colour may be vague (DARK / LIGHT-COLORED) and type
+// may be just CAR.
+function descriptionMatches(desc, identity) {
+  if (!desc) return false;
+  const firstSpace = desc.indexOf(' ');
+  const colorWord = desc.slice(0, firstSpace);
+  const typeWord = desc.slice(firstSpace + 1);
+  const colorOK = colorWord === identity.color.name ||
+    (colorWord === 'DARK' && identity.color.tone === 'DARK') ||
+    (colorWord === 'LIGHT-COLORED' && identity.color.tone === 'LIGHT');
+  const typeOK = typeWord === 'CAR' || typeWord === identity.type;
+  return colorOK && typeOK;
 }
 
 // Threshold band label for a value, from CONFIG bands [[min,label],...].
@@ -843,7 +863,7 @@ var State = (() => {
         closures: 0, falseCharges: 0, colds: 0, contestedShown: 0,
         contestedResolved: 0, autoReleased: 0, crimes: 0, vandalsSpawned: 0,
         vandalActs: 0, vandalAbandons: 0, dataLostReads: 0, reroutes: 0,
-        witnessCases: 0, bounties: 0, tips: 0, uploads: 0
+        witnessCases: 0, bounties: 0, tips: 0, uploads: 0, identified: 0
       }
     };
 
@@ -1085,7 +1105,7 @@ var CameraSystem = (() => {
     };
     cam.sight = Sightlines.compute(state.map, nodeIdx, type, cam.dir);
     state.cameras.push(cam);
-    state.stats.built++;
+    if (type !== 'OFFICER') state.stats.built++;   // tours don't count against network integrity
     Sightlines.rebuildCoverage(state);
     State.emit(state, { type: 'placed', camId: cam.id, node: nodeIdx, unit: type });
     return { ok: true, cam };
@@ -1116,6 +1136,7 @@ var CameraSystem = (() => {
   Actions.upgrade = function (state, camId, kind) {
     const cam = byId(state, camId);
     if (!cam) return { ok: false, reason: 'NO SUCH UNIT' };
+    if (cam.type === 'OFFICER') return { ok: false, reason: 'THE OFFICER IS FINE' };
     const cost = CONFIG.Upgrades[kind];
     if (cost === undefined) return { ok: false, reason: 'NO SUCH WORK' };
     if (kind === 'HARDEN' && cam.hardened) return { ok: false, reason: 'ALREADY HARDENED' };
@@ -1143,8 +1164,8 @@ var CameraSystem = (() => {
     read.uploadedAt = null;
     read.lost = false;
     state.reads.push(read);
-    if (relayAdjacent(state, cam)) {
-      read.uploadedAt = state.time;    // relay neighbours upload continuously
+    if (cam.type === 'OFFICER' || relayAdjacent(state, cam)) {
+      read.uploadedAt = state.time;    // eyewitness testimony and relay links file instantly
       read.expiresAt = state.time + retentionWindow(cam);
     } else {
       cam.drive.push(read.id);
@@ -1193,6 +1214,18 @@ var CameraSystem = (() => {
   function tick(state, dt) {
     for (const cam of state.cameras) {
       if (state.time - cam.lastUpload >= CONFIG.Retention.UPLOAD_INTERVAL) upload(state, cam);
+    }
+    // officers rotate off when the tour ends — nothing is lost (their
+    // testimony filed instantly), the corner just goes dark again
+    const expired = state.cameras.filter(c =>
+      c.type === 'OFFICER' && state.time - c.builtAt >= CONFIG.Cameras.OFFICER.TOUR_SECONDS);
+    if (expired.length) {
+      state.cameras = state.cameras.filter(c => !expired.includes(c));
+      Sightlines.rebuildCoverage(state);
+      for (const c of expired) {
+        State.emit(state, { type: 'officerOff', node: c.node });
+        State.log(state, 'Tour over — the officer at intersection ' + c.node + ' rotated off.', 'first-officer-off');
+      }
     }
   }
 
@@ -1318,18 +1351,15 @@ var Traffic = (() => {
     }
   }
 
+  // Ambient traffic enters from the city limits and drives THROUGH
+  // (player-directed): cars never pop into existence mid-map.
   function pickAmbientTrip(state) {
-    const nodes = state.map.nodes;
     const rng = () => State.rngNext(state, 'traffic');
-    let from = -1, guard = 40;
-    while (guard-- > 0) {
-      const n = Math.floor(rng() * nodes.length);
-      if (state.map.adj[n].length) { from = n; break; }
-    }
-    if (from < 0) return null;
     const exits = state.map.exits;
-    const to = exits[Math.floor(rng() * exits.length)];
-    if (to === from) return null;
+    if (exits.length < 2) return null;
+    const from = exits[Math.floor(rng() * exits.length)];
+    let to = exits[Math.floor(rng() * exits.length)];
+    if (to === from) to = exits[(exits.indexOf(from) + 1) % exits.length];
     return { from, to };
   }
 
@@ -1437,12 +1467,41 @@ var CaseSystem = (() => {
   function usableEvidence(state, kase) {
     const out = [];
     for (const r of state.reads) {
-      if (r.caseId !== kase.id || r.lost || r.uploadedAt === null) continue;
+      if (r.caseId !== kase.id || r.lost || r.uploadedAt === null || r.dismissed) continue;
       if (state.time >= r.expiresAt) continue;
       out.push(r);
     }
     return out;
   }
+
+  // The analyst can pull an irrelevant frame from a file (player-directed):
+  // excising a poisoned frame can clean a contested file and let a track
+  // close — and excising your own true frames is a new way to be wrong.
+  Actions.dismissRead = function (state, caseId, readId) {
+    const kase = byId(state, caseId);
+    if (!kase) return { ok: false, reason: 'NO SUCH CASE' };
+    if (kase.status !== 'OPEN' && kase.status !== 'CONTESTED') return { ok: false, reason: 'FILE NOT WORKABLE' };
+    const read = state.reads[readId - 1];
+    if (!read || read.caseId !== kase.id) return { ok: false, reason: 'NOT IN THIS FILE' };
+    read.dismissed = !read.dismissed;   // a toggle — pulled frames can come back
+    state.stats.dismissed = (state.stats.dismissed || 0) + (read.dismissed ? 1 : -1);
+    State.emit(state, { type: 'frameDismissed', caseId: kase.id, readId, dismissed: read.dismissed });
+    if (read.dismissed) State.log(state, 'Frame pulled from the file. Tap it again to restore.', 'first-dismiss');
+    // a cleaned contested file may go back to quietly building
+    if (kase.status === 'CONTESTED') {
+      const g = grade(state, usableEvidence(state, kase), gradeOpts(kase));
+      const S = CONFIG.Cases.CLOSURE_CONFIDENCE_SUM;
+      const tier = CONFIG.Ladder.TIERS[state.ladder.tier] || CONFIG.Ladder.TIERS[1];
+      const band = CONFIG.Cases.CONTESTED_BAND * (tier.contestedMult || 1);
+      const nearBar = g.best && g.bestSum >= S - band && g.bestSum < S;
+      if (!g.contradiction && !nearBar) {
+        kase.status = 'OPEN';
+        kase.contested = null;
+        State.log(state, 'File cleaned up — case building again.', null);
+      }
+    }
+    return { ok: true };
+  };
 
   // Which pairs of reads cannot be one vehicle — the evidence sheet marks
   // these so the player can see WHERE the file's story breaks.
@@ -1557,8 +1616,16 @@ var CaseSystem = (() => {
     if (!kase) {
       if (!crew.plate || type !== 'SYNDICATE') crew.plate = makePlate(() => State.rngNext(state, 'plates'));
       if (type === 'SYNDICATE' && !crew.plate) crew.plate = makePlate(() => State.rngNext(state, 'plates'));
+      // some witnesses catch no plate (player-directed): the file opens on
+      // the description alone and cannot be tracked, arrested or charged
+      // until the analyst ties it to a candidate car
+      const unidentified = type !== 'SYNDICATE' &&
+        State.rngNext(state, 'crimes') < CONFIG.Cases.UNIDENTIFIED_CHANCE;
       kase = {
-        id: state.nextCaseId++, type, plate: crew.plate, crewId,
+        id: state.nextCaseId++, type,
+        truePlate: crew.plate,
+        plate: unidentified ? null : crew.plate,
+        crewId,
         kind, landmark,
         spawnNode, openedAt: state.time,
         coldAt: state.time + CONFIG.Cases.LIFETIME_SECONDS,
@@ -1567,42 +1634,77 @@ var CaseSystem = (() => {
         _peakUsable: 0
       };
       // the witness saw the actual car — usually well, sometimes vaguely
-      kase.witnessDesc = witnessDescription(carIdentity(kase.plate),
+      kase.witnessDesc = witnessDescription(carIdentity(kase.truePlate),
         State.rngNext(state, 'witness'), State.rngNext(state, 'witness'));
       state.cases.push(kase);
+      if (kase.plate === null) {
+        State.log(state, 'No plate on the file — just "a ' + kase.witnessDesc + '". Candidates will collect on the card.', 'first-unidentified');
+      }
     }
 
     // choose exit weighted toward nearer ones
     const exits = state.map.exits;
     const weights = exits.map(e => 1 / (1 + nodeDist(state, spawnNode, e)));
     const exit = exits[weightedIndex(weights, rng())];
-    const veh = Traffic.spawnVehicle(state, 'SUSPECT', spawnNode, exit, crewId, kase.id, kase.plate);
+    const veh = Traffic.spawnVehicle(state, 'SUSPECT', spawnNode, exit, crewId, kase.id, kase.truePlate || kase.plate);
 
     State.emit(state, { type: 'crime', crimeType: type, node: spawnNode, caseId: kase.id, kind });
     // every reported crime rings the tip line (player-directed) with what
     // the witness actually saw; high trust gets zones flagged EARLY at the
     // telegraph, before the car moves
     state.stats.tips++;
-    State.emit(state, { type: 'tip', node: spawnNode, caseId: kase.id, early: false });
     const verb = TIP_VERBS[kind] || 'flee';
+    State.emit(state, {
+      type: 'tip', node: spawnNode, caseId: kase.id, early: false,
+      bubble: 'Saw a ' + kase.witnessDesc + '\n' + verb + ' ' + landmark + '!'
+    });
     State.log(state, 'Tip line: saw a ' + kase.witnessDesc + ' ' + verb + ' ' + landmark + '!', null);
     return kase;
   }
 
   // ---- read attachment (called by Traffic and Vandals) ----
 
+  // Unidentified files collect CANDIDATES instead of evidence: any
+  // clearly-photographed car matching the witness description near the
+  // scene joins the lineup, capped, until the analyst ties the file.
+  function candidateScan(state, read) {
+    const s = state.map.segs[read.segId];
+    for (const kase of state.cases) {
+      if (kase.plate !== null) continue;
+      if (kase.status !== 'OPEN' || state.time >= kase.coldAt) continue;
+      const d = Math.min(nodeDist(state, s.a, kase.spawnNode), nodeDist(state, s.b, kase.spawnNode));
+      if (d > CONFIG.Cases.CANDIDATE_DIST) continue;
+      if (!descriptionMatches(kase.witnessDesc, carIdentity(read.actualPlate))) continue;
+      if (!kase._candPlates) kase._candPlates = {};
+      const isNew = !kase._candPlates[read.actualPlate];
+      if (isNew && Object.keys(kase._candPlates).length >= CONFIG.Cases.CANDIDATE_MAX) continue;
+      kase._candPlates[read.actualPlate] = true;
+      read.candidateOf = kase.id;
+      kase._leads = (kase._leads || 0) + 1;
+      if (isNew) State.emit(state, { type: 'candidate', caseId: kase.id, plate: read.actualPlate });
+      return;   // a frame joins one lineup
+    }
+  }
+
   function attachRead(state, read, veh, cam) {
     if (!read.qualifying) return;     // below the bar: never enters a file (§7)
     if (veh && veh.caseId !== null) {
       const kase = byId(state, veh.caseId);
-      if (kase && (kase.status === 'OPEN' || kase.status === 'CONTESTED') && state.time < kase.coldAt) {
+      // a tied file only accepts reads of ITS plate — if you tied it to
+      // the wrong car, the real crew's reads no longer help you
+      if (kase && kase.plate !== null && veh.plate === kase.plate &&
+          (kase.status === 'OPEN' || kase.status === 'CONTESTED') && state.time < kase.coldAt) {
         read.caseId = kase.id;
-        read.trueMatch = true;
+        read.trueMatch = read.actualPlate === kase.truePlate;
         read.plate = kase.plate;
         kase._leads = (kase._leads || 0) + 1;
+        return;
       }
+      candidateScan(state, read);   // its own file untied (or gone): the lineup may still want this frame
       return;
     }
+    candidateScan(state, read);
+    if (read.candidateOf !== undefined) return;
     // Ambient vehicle. A clean read identifies an uninvolved plate and is
     // discarded; an ambiguous one (below CLARITY) can misattach to the
     // nearest open case — §7.1's trap, priced by the threshold. How often
@@ -1616,7 +1718,7 @@ var CaseSystem = (() => {
     const s = state.map.segs[read.segId];
     for (const kase of state.cases) {
       if (kase.status !== 'OPEN' && kase.status !== 'CONTESTED') continue;
-      if (kase.type === 'VANDAL') continue;
+      if (kase.type === 'VANDAL' || kase.plate === null) continue;
       if (state.time >= kase.coldAt) continue;
       const d = Math.min(nodeDist(state, s.a, kase.spawnNode), nodeDist(state, s.b, kase.spawnNode));
       if (d < bestD) { bestD = d; best = kase; }
@@ -1770,6 +1872,38 @@ var CaseSystem = (() => {
     return { ok: true, kase };
   };
 
+  // Tie an unidentified file to a candidate car (player-directed): its
+  // lineup frames become evidence, and from here the normal track →
+  // arrest → charge pipeline applies. Tie it to the wrong car and the
+  // real crew's reads stop helping you — the deepest trap in the game.
+  Actions.identify = function (state, caseId, plate) {
+    const kase = byId(state, caseId);
+    if (!kase) return { ok: false, reason: 'NO SUCH CASE' };
+    if (kase.plate !== null) return { ok: false, reason: 'FILE ALREADY TIED' };
+    if (kase.status !== 'OPEN') return { ok: false, reason: 'FILE NOT OPEN' };
+    if (!kase._candPlates || !kase._candPlates[plate]) return { ok: false, reason: 'NOT IN THE LINEUP' };
+    kase.plate = plate;
+    let attached = 0;
+    for (const r of state.reads) {
+      if (r.candidateOf !== kase.id) continue;
+      if (r.actualPlate === plate) {
+        r.caseId = kase.id;
+        r.plate = plate;
+        r.trueMatch = r.actualPlate === kase.truePlate;
+        delete r.candidateOf;
+        attached++;
+      } else {
+        delete r.candidateOf;   // the rest of the lineup goes home
+      }
+    }
+    // the clock restarts where the investigation properly begins
+    kase.coldAt = Math.max(kase.coldAt, state.time + CONFIG.Cases.LIFETIME_SECONDS * CONFIG.Cases.IDENTIFY_EXTEND);
+    state.stats.identified = (state.stats.identified || 0) + 1;
+    State.emit(state, { type: 'identified', caseId: kase.id, plate, frames: attached });
+    State.log(state, 'File tied to ' + plate + '. Track it, and the arrest can follow.', 'first-identified');
+    return { ok: true, attached };
+  };
+
   Actions.setThreshold = function (state, v) {
     const T = CONFIG.Threshold;
     const nv = clamp(Math.round(v), T.MIN, T.MAX);
@@ -1795,9 +1929,12 @@ var CaseSystem = (() => {
         kase._secondRun = true;
         const exits = state.map.exits;
         const exit = exits[Math.floor(State.rngNext(state, 'crimes') * exits.length)];
-        const veh = Traffic.spawnVehicle(state, 'SUSPECT', kase.spawnNode, exit, kase.crewId, kase.id, kase.plate);
+        const veh = Traffic.spawnVehicle(state, 'SUSPECT', kase.spawnNode, exit, kase.crewId, kase.id, kase.truePlate || kase.plate);
         if (veh) {
-          State.emit(state, { type: 'tip', node: kase.spawnNode, caseId: kase.id, early: false });
+          State.emit(state, {
+            type: 'tip', node: kase.spawnNode, caseId: kase.id, early: false,
+            bubble: 'Seen again —\na ' + (kase.witnessDesc || kase.plate) + '!'
+          });
           State.log(state, 'Seen again near ' + (kase.landmark || 'the scene') + ' — ' + (kase.witnessDesc || kase.plate) + '.', null);
         }
       }
@@ -1893,7 +2030,8 @@ var VandalSystem = (() => {
   }
 
   function pickTarget(state, vandal) {
-    const cams = state.cameras.filter(c => c.type !== undefined);
+    // nobody strips a pole with a uniform standing on it
+    const cams = state.cameras.filter(c => c.type !== 'OFFICER');
     if (!cams.length) return null;
     if (vandal.type === 'SCRAPPER') {
       // isolation: fewest other cameras watching the pole
@@ -1995,6 +2133,7 @@ var VandalSystem = (() => {
       }
       const read = {
         id: state.nextReadId++, t: state.time, segId: entry.seg, vehId: null,
+        subjectNode: node,     // where the figure stood — the still shoots this
         crewId: crew.id,
         actualPlate: crew.plate || 'CREW', plate: crew.plate || 'CREW',
         trueMatch: true, conf, qualifying,
@@ -2201,7 +2340,7 @@ var Economy = (() => {
 
   function networkIntegrity(state) {
     if (state.stats.built === 0) return 50;   // no network yet: neutral, not zero
-    const working = state.cameras.length;
+    const working = state.cameras.filter(c => c.type !== 'OFFICER').length;  // tours rotate off by design
     return clamp(100 * working / state.stats.built, 0, 100);
   }
 
@@ -3054,27 +3193,41 @@ var Renderer = (() => {
       if (rng() < 0.1) continue;                 // vacant lot
       const district = map.districts ? map.districts[y * map.W + x] : 'HOUSES';
       if (district === 'HOUSES' || district === 'SYNDICATE') {
-        const cnt = 2 + (rng() < 0.5 ? 1 : 0);   // small pitched-roof houses
+        // three house archetypes: simple, L-shaped, and with a garage
+        const cnt = 2 + (rng() < 0.5 ? 1 : 0);
+        const roofMats = [houseRoofMat,
+          new THREE.MeshLambertMaterial({ color: 0x1d2419 }),
+          new THREE.MeshLambertMaterial({ color: 0x261a1a })];
         for (let i = 0; i < cnt; i++) {
-          const hw = 0.16 + rng() * 0.08, hh = 0.12 + rng() * 0.08;
+          const hw = 0.15 + rng() * 0.08, hh = 0.12 + rng() * 0.08;
           const hx = x + 0.24 + rng() * 0.5, hz = y + 0.24 + rng() * 0.5;
+          const kind2 = rng();
           const body = new THREE.Mesh(new THREE.BoxGeometry(hw, hh, hw), houseMat);
           body.position.set(hx, hh / 2, hz);
           mapGroup.add(body);
-          const roof = new THREE.Mesh(new THREE.ConeGeometry(hw * 0.78, 0.09, 4), houseRoofMat);
+          const rm = roofMats[Math.floor(rng() * roofMats.length)];
+          const roof = new THREE.Mesh(new THREE.ConeGeometry(hw * 0.78, 0.07 + rng() * 0.05, 4), rm);
           roof.rotation.y = Math.PI / 4;
-          roof.position.set(hx, hh + 0.045, hz);
+          roof.position.set(hx, hh + 0.04, hz);
           mapGroup.add(roof);
-          if (rng() < 0.6) {   // a warm porch light
-            const pl = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.03, 0.006),
-              winMats[0]);
+          if (kind2 < 0.35) {           // L-wing
+            const wing = new THREE.Mesh(new THREE.BoxGeometry(hw * 0.7, hh * 0.8, hw * 0.55), houseMat);
+            wing.position.set(hx + hw * 0.62, hh * 0.4, hz + hw * 0.2);
+            mapGroup.add(wing);
+          } else if (kind2 < 0.6) {     // flat-roofed garage
+            const gar = new THREE.Mesh(new THREE.BoxGeometry(hw * 0.6, hh * 0.55, hw * 0.6), bMats[0]);
+            gar.position.set(hx - hw * 0.72, hh * 0.28, hz);
+            mapGroup.add(gar);
+          }
+          if (rng() < 0.6) {            // a warm porch light
+            const pl = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.03, 0.006), winMats[0]);
             pl.position.set(hx + (rng() - 0.5) * hw * 0.5, hh * 0.45, hz + hw / 2 + 0.004);
             mapGroup.add(pl);
           }
         }
       } else if (district === 'APARTMENTS') {
-        const bw = 0.34 + rng() * 0.18, bd = 0.3 + rng() * 0.16;
-        const bh = 0.38 + rng() * 0.3;
+        const bw = 0.32 + rng() * 0.2, bd = 0.3 + rng() * 0.16;
+        const bh = 0.34 + rng() * 0.38;
         const bx = x + 0.3 + rng() * 0.35, bz = y + 0.3 + rng() * 0.35;
         const bm = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), bMats[Math.floor(rng() * 2)]);
         bm.position.set(bx, bh / 2, bz);
@@ -3084,17 +3237,52 @@ var Renderer = (() => {
           ledge.position.set(bx, bh * l / 3, bz);
           mapGroup.add(ledge);
         }
+        const flavor = rng();
+        if (flavor < 0.35) {            // stairwell tower on the roof
+          const st = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.28, 0.1, bd * 0.3), roofMat);
+          st.position.set(bx + bw * 0.25, bh + 0.05, bz - bd * 0.2);
+          mapGroup.add(st);
+        } else if (flavor < 0.6) {      // row of rooftop AC units
+          for (let a2 = 0; a2 < 3; a2++) {
+            const ac = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.025, 0.035), roofMat);
+            ac.position.set(bx - bw * 0.3 + a2 * bw * 0.3, bh + 0.013, bz + bd * 0.2);
+            mapGroup.add(ac);
+          }
+        } else if (flavor < 0.75) {     // a corner shop at street level
+          const shop = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.9, 0.02, 0.05),
+            new THREE.MeshBasicMaterial({ color: [0x7a5a8a, 0x5a7a6a, 0x8a6a4a][Math.floor(rng() * 3)] }));
+          shop.position.set(bx, 0.1, bz + bd / 2 + 0.02);
+          mapGroup.add(shop);
+        }
         addWindows(bx, bh, bz, bw, bd, 2 + Math.floor(rng() * 3));
-      } else {                                    // DOWNTOWN / OFFICE ring: towers
+      } else {                                    // DOWNTOWN / OFFICE ring: tower archetypes
         const cnt = 1 + (rng() < 0.35 ? 1 : 0);
         for (let i = 0; i < cnt; i++) {
           const bw = 0.24 + rng() * 0.18, bd = 0.24 + rng() * 0.18;
-          const bh = 0.7 + rng() * 1.1;
+          const bh = 0.65 + rng() * 1.15;
           const bx = x + 0.28 + rng() * (0.44 - bw / 2), bz = y + 0.28 + rng() * (0.44 - bd / 2);
-          const bm = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), towerMat);
-          bm.position.set(bx, bh / 2, bz);
-          mapGroup.add(bm);
-          addWindows(bx, bh, bz, bw, bd, 3 + Math.floor(rng() * 4));
+          const arch = rng();
+          if (arch < 0.4) {             // stepped setback tower
+            const base = new THREE.Mesh(new THREE.BoxGeometry(bw, bh * 0.6, bd), towerMat);
+            base.position.set(bx, bh * 0.3, bz);
+            mapGroup.add(base);
+            const top = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.65, bh * 0.45, bd * 0.65), towerMat);
+            top.position.set(bx, bh * 0.6 + bh * 0.22, bz);
+            mapGroup.add(top);
+            addWindows(bx, bh * 0.6, bz, bw, bd, 3);
+          } else if (arch < 0.6) {      // round tower with a crown
+            const cyl = new THREE.Mesh(new THREE.CylinderGeometry(bw * 0.45, bw * 0.5, bh, 10), towerMat);
+            cyl.position.set(bx, bh / 2, bz);
+            mapGroup.add(cyl);
+            const crown = new THREE.Mesh(new THREE.CylinderGeometry(bw * 0.5, bw * 0.45, 0.03, 10), roofMat);
+            crown.position.set(bx, bh + 0.015, bz);
+            mapGroup.add(crown);
+          } else {                      // slab
+            const bm = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), towerMat);
+            bm.position.set(bx, bh / 2, bz);
+            mapGroup.add(bm);
+            addWindows(bx, bh, bz, bw, bd, 3 + Math.floor(rng() * 4));
+          }
           if (rng() < 0.6) {
             const v = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.25, 0.08, bd * 0.25), roofMat);
             v.position.set(bx + (rng() - 0.5) * bw * 0.4, bh + 0.04, bz + (rng() - 0.5) * bd * 0.4);
@@ -3104,19 +3292,57 @@ var Renderer = (() => {
       }
     }
 
-    // signature landmarks with signs
+    // every part of town gets its name, not just the landmarks
+    // (player-directed): muted labels so they never compete with signals
+    const addDistrictLabel = (nodeIdx, text) => {
+      if (nodeIdx === undefined || nodeIdx < 0) return;
+      const n = map.nodes[nodeIdx];
+      const sp = textSprite(text, '#7d8798', 'rgba(8,10,14,0.72)');
+      sp.scale.set(0.62, 0.17, 1);
+      sp.position.set(n.x, 0.42, n.y);
+      mapGroup.add(sp);
+    };
+    if (map.districts) {
+      const byDistrict = (tag, pick) => {
+        const cands = map.nodes.filter(n => map.districts[n.id] === tag && map.adj[n.id].length);
+        if (!cands.length) return -1;
+        return pick(cands).id;
+      };
+      addDistrictLabel(map.center, 'DOWNTOWN');
+      addDistrictLabel(map.syndicate, 'SYNDICATE BLOCK');
+      addDistrictLabel(byDistrict('APARTMENTS', c => c.reduce((m, n) => n.y < m.y ? n : m, c[0])), 'APARTMENTS');
+      addDistrictLabel(byDistrict('APARTMENTS', c => c.reduce((m, n) => n.y > m.y ? n : m, c[0])), 'APARTMENTS');
+      addDistrictLabel(byDistrict('HOUSES', c => c.reduce((m, n) => n.y < m.y ? n : m, c[0])), 'ROW HOUSES');
+      addDistrictLabel(byDistrict('HOUSES', c => c.reduce((m, n) => n.y > m.y ? n : m, c[0])), 'ROW HOUSES');
+    }
+
+    // signature landmarks that LOOK like their labels (player-directed)
     for (const p of poiDefs) {
       const bx = p.x + 0.5, bz = p.y + 0.5;
       if (p.kind === 'BANK') {
         const hall = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.3, 0.4),
-          new THREE.MeshLambertMaterial({ color: 0x3a3830 }));
+          new THREE.MeshLambertMaterial({ color: 0x403d33 }));
         hall.position.set(bx, 0.15, bz);
         mapGroup.add(hall);
+        // pediment over the columns, and steps down to the street
+        const ped = new THREE.Mesh(new THREE.CylinderGeometry(0, 0.3, 0.1, 3),
+          new THREE.MeshLambertMaterial({ color: 0x555142 }));
+        ped.rotation.z = Math.PI / 2;
+        ped.rotation.y = Math.PI / 2;
+        ped.scale.set(1, 1, 0.4);
+        ped.position.set(bx, 0.33, bz - 0.16);
+        mapGroup.add(ped);
         for (let c = -1; c <= 1; c++) {
-          const col = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.22, 6),
-            new THREE.MeshLambertMaterial({ color: 0x555142 }));
-          col.position.set(bx + c * 0.16, 0.11, bz - 0.24);
+          const col = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.24, 6),
+            new THREE.MeshLambertMaterial({ color: 0x5c5847 }));
+          col.position.set(bx + c * 0.16, 0.12, bz - 0.24);
           mapGroup.add(col);
+        }
+        for (let s2 = 0; s2 < 3; s2++) {
+          const step = new THREE.Mesh(new THREE.BoxGeometry(0.5 - s2 * 0.06, 0.016, 0.06),
+            new THREE.MeshLambertMaterial({ color: 0x4a463a }));
+          step.position.set(bx, 0.008 + s2 * 0.016, bz - 0.3 - s2 * 0.03);
+          mapGroup.add(step);
         }
         addSign(bx, 0.52, bz, 'BANK', '#e8d48a');
       } else if (p.kind === 'GROCERY') {
@@ -3124,17 +3350,58 @@ var Renderer = (() => {
           new THREE.MeshLambertMaterial({ color: 0x27302b }));
         store.position.set(bx, 0.07, bz);
         mapGroup.add(store);
+        // lit storefront band + a little parking with parked cars
+        const front = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.05, 0.006),
+          new THREE.MeshBasicMaterial({ color: 0xbfd9a8 }));
+        front.position.set(bx, 0.05, bz + 0.234);
+        mapGroup.add(front);
+        const lot = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.006, 0.2),
+          new THREE.MeshLambertMaterial({ color: 0x22252c }));
+        lot.position.set(bx, 0.003, bz + 0.36);
+        mapGroup.add(lot);
+        for (let pc = 0; pc < 2 + Math.floor(rng() * 2); pc++) {
+          const parked = buildVehicle({ plate: 'PARK' + Math.floor(rng() * 999) + p.x + '' + pc, id: -1 });
+          parked.scale.setScalar(0.85);
+          parked.rotation.y = Math.PI / 2 + (rng() - 0.5) * 0.1;
+          parked.position.set(bx - 0.2 + pc * 0.17, 0, bz + 0.36);
+          parked.traverse(o => { if (o.material && o.material.color && o.geometry &&
+            o.geometry.type === 'ConeGeometry') o.visible = false; });   // no headlight cones while parked
+          mapGroup.add(parked);
+        }
         addSign(bx, 0.36, bz, 'GROCERY', '#9fd9a3');
       } else if (p.kind === 'OFFICE') {
         const tower = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.5, 0.3), towerMat);
         tower.position.set(bx, 0.75, bz);
         mapGroup.add(tower);
+        // glass curtain: stacked lit window rows + a lobby band
+        for (let f = 0; f < 7; f++) addWindows(bx, 1.45, bz, 0.3, 0.3, 2);
+        const lobby = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.05, 0.006),
+          new THREE.MeshBasicMaterial({ color: 0x9ab4d9 }));
+        lobby.position.set(bx, 0.05, bz + 0.154);
+        mapGroup.add(lobby);
         const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.22, 4),
           new THREE.MeshBasicMaterial({ color: 0x8b93a5 }));
         mast.position.set(bx, 1.6, bz);
         mapGroup.add(mast);
         addSign(bx, 1.78, bz, 'OFFICES', '#9ab4d9');
       }
+    }
+    // the syndicate block reads as what it is: a dark warehouse, lights off
+    {
+      const sn = map.nodes[map.syndicate];
+      const wx = clamp(sn.x, 0, map.W - 2) + 0.5, wz = clamp(sn.y, 0, map.H - 2) + 0.5;
+      const wh = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.2, 0.42),
+        new THREE.MeshLambertMaterial({ color: 0x191b1c }));
+      wh.position.set(wx, 0.1, wz);
+      mapGroup.add(wh);
+      const roofRidge = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.03, 0.08),
+        new THREE.MeshLambertMaterial({ color: 0x121415 }));
+      roofRidge.position.set(wx, 0.215, wz);
+      mapGroup.add(roofRidge);
+      const door = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.006),
+        new THREE.MeshLambertMaterial({ color: 0x24272a }));
+      door.position.set(wx, 0.06, wz + 0.214);
+      mapGroup.add(door);
     }
     scene.add(mapGroup);
   }
@@ -3241,6 +3508,25 @@ var Renderer = (() => {
       ring.rotation.x = Math.PI / 2;
       ring.position.y = 0.58;
       g.add(ring);
+    } else if (cam.type === 'OFFICER') {
+      // no pole: a uniform standing the corner
+      g.remove(pole);
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.065, 0.16, 8),
+        new THREE.MeshLambertMaterial({ color: 0x2e3a55 }));
+      body.position.y = 0.08;
+      g.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6),
+        new THREE.MeshLambertMaterial({ color: 0x8a7862 }));
+      head.position.y = 0.185;
+      g.add(head);
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.048, 0.02, 8),
+        new THREE.MeshLambertMaterial({ color: 0x232c42 }));
+      cap.position.y = 0.215;
+      g.add(cap);
+      const badge = new THREE.Mesh(new THREE.SphereGeometry(0.012, 6, 5),
+        new THREE.MeshBasicMaterial({ color: 0xffd98a }));
+      badge.position.set(0.03, 0.11, 0.045);
+      g.add(badge);
     } else if (cam.type === 'RELAY') {
       const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.02, 0.3, 5), poleMat);
       mast.position.y = 0.68;
@@ -3388,16 +3674,34 @@ var Renderer = (() => {
     shadow.position.y = 0.004;
     shadow.scale.z = 0.62;
     g.add(shadow);
-    // lit headlights and taillights read direction of travel instantly
+    // lit headlights and taillights read direction of travel instantly —
+    // and a car's damage traits show on the model itself, so the case
+    // file's photos and the witness's description share one truth
     const hlMat = new THREE.MeshBasicMaterial({ color: 0xffe9b0 });
     const tlMat = new THREE.MeshBasicMaterial({ color: 0xc2483c });
+    const deadMat = new THREE.MeshBasicMaterial({ color: 0x3a2224 });
+    const brokenTl = ident.damage.includes('BROKEN TAILLIGHT');
     for (const s of [-1, 1]) {
       const hl = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.014, 0.02), hlMat);
       hl.position.set(d.l / 2, d.h * 0.55, s * d.w * 0.3);
       g.add(hl);
-      const tl = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.012, 0.018), tlMat);
+      const tl = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.012, 0.018),
+        brokenTl && s === 1 ? deadMat : tlMat);
       tl.position.set(-d.l / 2, d.h * 0.55, s * d.w * 0.3);
       g.add(tl);
+    }
+    if (ident.damage.includes('DENTED PANEL')) {
+      const dent = new THREE.Mesh(new THREE.BoxGeometry(d.l * 0.28, d.h * 0.5, 0.004),
+        new THREE.MeshLambertMaterial({ color: 0x14161a }));
+      dent.position.set(d.l * 0.08, d.h * 0.5, d.w / 2 + 0.002);
+      g.add(dent);
+    }
+    if (ident.damage.includes('CRACKED WINDSHIELD')) {
+      const crack = new THREE.Mesh(new THREE.BoxGeometry(0.003, 0.02, d.w * 0.5),
+        new THREE.MeshBasicMaterial({ color: 0xd8e0ec, transparent: true, opacity: 0.7 }));
+      crack.position.set(d.l * 0.22, d.h + 0.012, 0);
+      crack.rotation.y = 0.3;
+      g.add(crack);
     }
     const cone = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.34, 8, 1, true),
       new THREE.MeshBasicMaterial({
@@ -3418,8 +3722,9 @@ var Renderer = (() => {
     const b = nodePos(map, veh.path[veh.at + 1]);
     const t = veh.segT;
     const dx = b.x - a.x, dz = b.z - a.z;
-    // drive on the right: offset perpendicular to travel
-    const ox = dz * 0.07, oz = -dx * 0.07;
+    // right-hand traffic (player-directed): the driver's right of travel
+    // direction (dx,dz) is (-dz,dx) with x east and z south
+    const ox = -dz * 0.07, oz = dx * 0.07;
     return { x: a.x + dx * t + ox, z: a.z + dz * t + oz, ang: Math.atan2(dz, dx) };
   }
 
@@ -3602,6 +3907,37 @@ var Renderer = (() => {
     }
   }
 
+  // A word bubble pops where the crime was reported (player-directed):
+  // the witness's own words, floating over the scene.
+  function wordBubble(state, node, text, dur) {
+    const lines = text.split('\n');
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 40 + lines.length * 42;
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgba(14,17,24,0.94)';
+    g.beginPath(); g.roundRect(4, 4, 504, c.height - 26, 16); g.fill();
+    g.strokeStyle = '#ffc84a'; g.lineWidth = 3; g.stroke();
+    // the tail
+    g.fillStyle = 'rgba(14,17,24,0.94)';
+    g.beginPath();
+    g.moveTo(236, c.height - 24); g.lineTo(276, c.height - 24); g.lineTo(256, c.height - 2);
+    g.closePath(); g.fill();
+    g.font = 'bold 30px "Segoe UI", Arial, sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = '#f2e8c8';
+    lines.forEach((l, i) => g.fillText(l, 256, 26 + i * 40));
+    const tex = new THREE.CanvasTexture(c);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+    const scale = 1.7;
+    sp.scale.set(scale, scale * c.height / 512, 1);
+    const p = nodePos(state.map, node);
+    sp.position.set(p.x, 0.75, p.z);
+    addFx(sp, dur || 4.5, (f, k) => {
+      f.mesh.position.y = 0.75 + k * 0.25;
+      f.mesh.material.opacity = k < 0.12 ? k / 0.12 : k > 0.8 ? (1 - k) / 0.2 : 1;
+    });
+  }
+
   function crimeIcon(state, node, color, dur) {
     const sp = textSprite('!', '#111', null);
     // diamond backing
@@ -3665,7 +4001,10 @@ var Renderer = (() => {
           break;
         }
         case 'crime': crimeIcon(state, ev.node, V.RED, 6); break;
-        case 'tip': if (ev.early) crimeIcon(state, ev.node, V.CYAN, 5); break;
+        case 'tip':
+          if (ev.bubble) wordBubble(state, ev.node, ev.bubble, 4.5);
+          else if (ev.early) crimeIcon(state, ev.node, V.CYAN, 5);
+          break;
         case 'arrest': {
           const node = ev.node !== undefined ? ev.node
             : (state.cases.find(c => c.id === ev.caseId) || {}).spawnNode;
@@ -3759,6 +4098,72 @@ var Renderer = (() => {
     tutorialRing.rotation.x = -Math.PI / 2;
     tutorialRing.position.set(p.x, 0.06, p.z);
     scene.add(tutorialRing);
+  }
+
+  // ---------- the Cyclops lens: real 3D stills for the case file ----------
+  // Each frame is rendered from the photographing camera's own head, into
+  // the live scene, with the ACTUAL vehicle placed on the read's segment.
+  // Non-diegetic layers (coverage, fx, markers, live traffic) are hidden
+  // for the exposure; the UI applies confidence-degradation post on top.
+
+  let stillRenderer = null, stillCam = null;
+
+  function captureStill(read) {
+    if (!curState || !renderer || read.camNode === undefined) return null;
+    const map = curState.map;
+    const seg = map.segs[read.segId];
+    if (!seg) return null;
+    if (!stillRenderer) {
+      const cv = document.createElement('canvas');
+      cv.width = 704; cv.height = 352;
+      stillRenderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true, preserveDrawingBuffer: true });
+      stillRenderer.setPixelRatio(1);
+      stillCam = new THREE.PerspectiveCamera(55, cv.width / cv.height, 0.05, 40);
+    }
+
+    // the subject: the car that was genuinely photographed (or the hooded
+    // figure at the pole, for a witness frame)
+    let subject;
+    const a = nodePos(map, seg.a), b = nodePos(map, seg.b);
+    if (read.vehId !== null) {
+      subject = buildVehicle({ plate: read.actualPlate, id: -1 });
+      const HD = [[1, 0], [0, 1], [-1, 0], [0, -1]][read.heading || 0];
+      // on its correct (right-hand) side of the street in the photo too
+      subject.position.set(
+        a.x + (b.x - a.x) * 0.5 - HD[1] * 0.07, 0,
+        a.z + (b.z - a.z) * 0.5 + HD[0] * 0.07);
+      subject.rotation.y = -Math.atan2(HD[1], HD[0]);
+    } else {
+      subject = buildVandal({ id: -1, type: 'FIXER' });
+      const n = read.subjectNode !== undefined ? nodePos(map, read.subjectNode) : { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
+      subject.position.set(n.x - 0.15, 0, n.z - 0.15);
+    }
+    scene.add(subject);
+
+    // shoot from over the intersection itself (the pole's head hangs out
+    // over the street — a lens buried in the block would photograph
+    // rooftops), zoomed so the subject fills the frame at any distance
+    const cn = nodePos(map, read.camNode);
+    stillCam.position.set(cn.x, 0.55, cn.z);
+    const dist = Math.hypot(subject.position.x - cn.x, subject.position.z - cn.z) || 0.5;
+    stillCam.fov = clamp(2 * Math.atan(0.42 / dist) * 180 / Math.PI, 16, 48);
+    stillCam.updateProjectionMatrix();
+    stillCam.lookAt(subject.position.x, 0.06, subject.position.z);
+    const flood = new THREE.PointLight(0xc8d8ee, 1.6, 6);
+    flood.position.set(cn.x, 0.8, cn.z);
+    scene.add(flood);
+
+    const hidden = [overlayGroup, fxGroup, caseGroup, vehGroup, vandalGroup,
+      selectedRing, tutorialRing, ghost, rainSys].filter(Boolean);
+    const prior = hidden.map(o => o.visible);
+    hidden.forEach(o => { o.visible = false; });
+
+    stillRenderer.render(scene, stillCam);
+
+    hidden.forEach((o, i) => { o.visible = prior[i]; });
+    scene.remove(subject);
+    scene.remove(flood);
+    return stillRenderer.domElement;
   }
 
   // ---------- picking & projection ----------
@@ -3950,7 +4355,7 @@ var Renderer = (() => {
     clearGhost,
     setSelected: (n) => setSelected(curState, n),
     setTutorialRing: (n) => setTutorialRing(curState, n),
-    markOverlayDirty,
+    markOverlayDirty, captureStill,
     // tap a camera and its whole sightline lights for a beat — the
     // fastest way to teach what one unit actually holds
     flashSightline: (camId) => {
@@ -4060,6 +4465,8 @@ var UI = (() => {
 .ctxbtn .ex { color:#8b93a5; font-size:8.5px; }
 .ctxbtn[data-refused] { opacity:0.45; }
 .ctxbtn.demolit { outline:2px solid #ffc84a; box-shadow:0 0 12px #ffc84a88; animation:blink 0.5s infinite; }
+.demolit { outline:2px solid #ffc84a; box-shadow:0 0 12px #ffc84a88; animation:blink 0.5s infinite; }
+.demopress { transform:scale(0.9); filter:brightness(1.6); transition:transform 0.08s; }
 .dismiss { align-self:flex-end; background:#232837; border:1px solid #343b4e; color:#aab2c0;
   border-radius:7px; padding:6px 12px; font-size:11px; font-weight:700; }
 .confirmwrap { position:absolute; z-index:29; display:flex; flex-direction:column; gap:6px; align-items:center; }
@@ -4231,7 +4638,7 @@ var UI = (() => {
     // an open case file follows its case: resolved or expired → it closes
     if (evsheetCaseId !== null) {
       const kase = CaseSystem.byId(state, evsheetCaseId);
-      if (!kase || kase.status !== 'CONTESTED') {
+      if (!kase || (kase.status !== 'CONTESTED' && kase.status !== 'OPEN')) {
         closeEvidenceSheet();
         if (kase && kase.status === 'COLD') identity('The file expired unanswered — released.');
       }
@@ -4264,7 +4671,7 @@ var UI = (() => {
       el.setAttribute('data-key', 'case-' + kase.id);
       el.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (kase.status === 'CONTESTED') {   // the card opens the case file
+        if (kase.status === 'CONTESTED' || kase.status === 'OPEN') {   // the card opens the case file
           openEvidenceSheet(kase.id);
           return;
         }
@@ -4280,7 +4687,7 @@ var UI = (() => {
   function caseIdentity(kase) {
     const ev = CaseSystem.usableEvidence(state, kase);
     const kind = kase.type === 'VANDAL' ? 'VANDAL CREW CASE' : kase.type + ' CASE';
-    return kind + ' — ' + kase.plate + ' · ' + ev.length + ' read' + (ev.length === 1 ? '' : 's') +
+    return kind + ' — ' + (kase.plate || 'NO PLATE') + ' · ' + ev.length + ' read' + (ev.length === 1 ? '' : 's') +
       ' · cold in ' + Math.max(0, Math.ceil(kase.coldAt - state.time)) + 's';
   }
 
@@ -4327,6 +4734,14 @@ var UI = (() => {
         el.querySelector('.release').onclick = (e) => {
           e.stopPropagation(); Actions.adjudicate(state, kase.id, 'RELEASE'); GameAudio.unlock();
         };
+      } else if (kase.status === 'OPEN' && kase.plate === null) {
+        const cand = kase._candPlates ? Object.keys(kase._candPlates).length : 0;
+        el.innerHTML = `
+          <div class="typ">UNIDENTIFIED · ${kase.kind || kase.type}</div>
+          <div class="plate" style="font-size:8.5px;line-height:1.3">"a ${kase.witnessDesc}"</div>
+          <div class="pips">${pips}</div>
+          <div class="evmeta" style="margin:1px 0">${cand ? cand + ' candidate' + (cand === 1 ? '' : 's') + ' — tap' : 'collecting…'}</div>
+          <div class="timer"><i style="width:${frac * 100}%;background:#b0813a"></i></div>`;
       } else if (kase.status === 'ARREST') {
         const trial = Math.max(0, Math.ceil(kase.convictAt - state.time));
         el.innerHTML = `
@@ -4340,7 +4755,7 @@ var UI = (() => {
           : kase.status === 'COLD' ? ' · COLD' : '';
         el.innerHTML = `
           <div class="typ">${kase.kind || (kase.type === 'VANDAL' ? 'VANDALISM' : kase.type)}${tail}</div>
-          <div class="plate">${kase.plate}</div>
+          <div class="plate">${kase.plate || 'NO PLATE'}</div>
           <div class="pips">${pips}</div>
           <div class="timer"><i style="width:${frac * 100}%"></i></div>`;
       }
@@ -4369,6 +4784,36 @@ var UI = (() => {
     const W = canvas.width, H = canvas.height;
     const rng = mulberry32(hashStr('still:' + read.id));
     const q = clamp((read.conf - 20) / 70, 0.08, 1);   // confidence IS image quality
+
+    // THE REAL PHOTO: rendered from the Cyclops' own head into the live
+    // 3D city, with the actual car on the actual street (player-directed:
+    // "we have all the 3d models"). The 2D scene below survives only as a
+    // fallback for a lost WebGL context.
+    const photoH = H * 0.8;
+    const shot = (typeof Renderer !== 'undefined' && Renderer.captureStill)
+      ? Renderer.captureStill(read) : null;
+    if (shot) {
+      // crop source to cover the photo region without stretching
+      const sAspect = shot.width / shot.height, dAspect = W / photoH;
+      let sw = shot.width, sh = shot.height, sx = 0, sy = 0;
+      if (sAspect > dAspect) { sw = shot.height * dAspect; sx = (shot.width - sw) / 2; }
+      else { sh = shot.width / dAspect; sy = (shot.height - sh) / 2; }
+      const smear = (1 - q) * W * 0.03;
+      if (smear > 1) {
+        g.globalAlpha = 0.4;
+        g.drawImage(shot, sx, sy, sw, sh, -smear, 0, W, photoH);
+      }
+      g.globalAlpha = 1;
+      g.drawImage(shot, sx, sy, sw, sh, 0, 0, W, photoH);
+      // murk swallows the frame as quality falls
+      g.fillStyle = `rgba(13,16,23,${(1 - q) * 0.5})`;
+      g.fillRect(0, 0, W, photoH);
+      // CCTV scanlines
+      g.fillStyle = 'rgba(0,0,0,0.07)';
+      for (let y = 0; y < photoH; y += 4) g.fillRect(0, y, W, 1.4);
+      drawPlateAndWeather(g, W, H, read, q, rng);
+      return;
+    }
 
     // night ground
     g.fillStyle = '#07090d'; g.fillRect(0, 0, W, H);
@@ -4477,7 +4922,12 @@ var UI = (() => {
       g.fillRect(cx - 4, cy - ch - 4, cw + 8, ch * 1.4 + 8);
     }
 
-    // the plate strip — the ANPR close-up along the bottom
+    drawPlateAndWeather(g, W, H, read, q, rng);
+  }
+
+  // the ANPR plate strip + weather, grime, grain and vignette — applied
+  // over BOTH the real 3D photo and the 2D fallback
+  function drawPlateAndWeather(g, W, H, read, q, rng) {
     g.fillStyle = 'rgba(5,6,9,0.88)';
     g.fillRect(0, H * 0.8, W, H * 0.2);
     const plate = read.plate || '???-???';
@@ -4511,11 +4961,32 @@ var UI = (() => {
       }
     }
     if (read.camTags > 0) {
+      // a fouled lens: grease blotches that swallow detail, and the
+      // telltale light-scatter bloom where grime catches the streetlight
       for (let i = 0; i < read.camTags + 1; i++) {
-        const sg = g.createRadialGradient(rng() * W, rng() * H * 0.7, 2, rng() * W, rng() * H * 0.7, W * 0.3);
-        sg.addColorStop(0, 'rgba(22,26,20,0.55)'); sg.addColorStop(1, 'rgba(0,0,0,0)');
+        const bx = rng() * W, by = rng() * H * 0.7;
+        const sg = g.createRadialGradient(bx, by, 2, bx, by, W * (0.18 + rng() * 0.16));
+        sg.addColorStop(0, 'rgba(26,30,22,0.7)');
+        sg.addColorStop(0.6, 'rgba(20,24,18,0.35)');
+        sg.addColorStop(1, 'rgba(0,0,0,0)');
         g.fillStyle = sg; g.fillRect(0, 0, W, H);
       }
+      g.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < read.camTags * 2; i++) {
+        const bx = rng() * W, by = rng() * H * 0.6;
+        const hg = g.createRadialGradient(bx, by, 1, bx, by, W * (0.08 + rng() * 0.1));
+        hg.addColorStop(0, 'rgba(190,180,140,0.22)');
+        hg.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = hg; g.fillRect(0, 0, W, H);
+      }
+      // a greasy smear dragged across the glass
+      const sy = H * (0.15 + rng() * 0.4);
+      const sm = g.createLinearGradient(0, sy, W, sy + H * 0.18);
+      sm.addColorStop(0, 'rgba(0,0,0,0)');
+      sm.addColorStop(0.5, 'rgba(150,145,120,0.12)');
+      sm.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = sm; g.fillRect(0, sy - H * 0.1, W, H * 0.35);
+      g.globalCompositeOperation = 'source-over';
     }
     // grain
     const specks = Math.floor((1 - q) * 170);
@@ -4538,6 +5009,7 @@ var UI = (() => {
     return state.reads.filter(r => r.caseId === kase.id).sort((a, b) => a.t - b.t);
   }
   function readStatus(r) {
+    if (r.dismissed) return ['PULLED FROM FILE', '#d8b0ab'];
     if (r.lost) return ['LOST WITH POLE', '#ff8a80'];
     if (r.uploadedAt === null) return ['ON THE POLE — UNSENT', '#ffb44a'];
     if (state.time >= r.expiresAt) return ['AGED OFF', '#8b93a5'];
@@ -4650,7 +5122,7 @@ var UI = (() => {
   function openEvidenceSheet(caseId) {
     closeEvidenceSheet();
     const kase = CaseSystem.byId(state, caseId);
-    if (!kase || kase.status !== 'CONTESTED') return;
+    if (!kase || (kase.status !== 'CONTESTED' && kase.status !== 'OPEN')) return;
     evsheetCaseId = caseId;
     const ev = allEvidence(kase);           // the WHOLE file, aged and lost included
     const active = ev.filter(r => !readStatus(r));
@@ -4660,27 +5132,98 @@ var UI = (() => {
     const idxOf = {};
     ev.forEach((r, i) => { idxOf[r.id] = i + 1; });
 
+    const untied = kase.plate === null;
     const sheet = h('div', 'evsheet');
     sheet.setAttribute('data-key', 'evsheet');
     const c = kase.contested || {};
-    sheet.innerHTML = `<div class="evhead"><b>CASE FILE — ${kase.plate}</b>
-      <span>${kase.kind || kase.type} at ${kase.landmark || 'the scene'} · ${ev.length} frame${ev.length === 1 ? '' : 's'}${active.length !== ev.length ? ' (' + active.length + ' usable)' : ''} · ${c.contradiction ? 'contradiction' : 'near the bar'} · cold in ${Math.max(0, Math.ceil(kase.coldAt - state.time))}s</span>
+    const situ = kase.status === 'CONTESTED' ? (c.contradiction ? 'contradiction' : 'near the bar')
+      : untied ? 'no plate on file' : 'building';
+    sheet.innerHTML = `<div class="evhead"><b>CASE FILE — ${untied ? 'NO PLATE' : kase.plate}</b>
+      <span>${kase.kind || kase.type} at ${kase.landmark || 'the scene'} · ${ev.length} frame${ev.length === 1 ? '' : 's'}${active.length !== ev.length ? ' (' + active.length + ' usable)' : ''} · ${situ} · cold in ${Math.max(0, Math.ceil(kase.coldAt - state.time))}s</span>
       <button data-key="ev-close">✕</button></div>
-      ${kase.witnessDesc ? `<div class="evhint" style="margin:0 0 8px"><span style="color:#ffc84a;font-weight:700">WITNESS: "a ${kase.witnessDesc}"</span> — does every frame match?</div>` : ''}`;
+      ${kase.witnessDesc ? `<div class="evhint" style="margin:0 0 8px"><span style="color:#ffc84a;font-weight:700">WITNESS: "a ${kase.witnessDesc}"</span> — ${untied ? 'which of these cars is it?' : 'does every frame match?'}</div>` : ''}`;
+
+    // an untied file shows the LINEUP: candidate cars photographed near
+    // the scene that fit the description. Tie the file to one and the
+    // track → arrest → charge pipeline unlocks. Choose carefully.
+    if (untied) {
+      const groups = {};
+      for (const r of state.reads) {
+        if (r.candidateOf !== kase.id) continue;
+        (groups[r.actualPlate] = groups[r.actualPlate] || []).push(r);
+      }
+      const plates = Object.keys(groups).sort((a, b) =>
+        groups[b].reduce((s, r) => s + r.conf, 0) - groups[a].reduce((s, r) => s + r.conf, 0));
+      if (!plates.length) {
+        sheet.appendChild(h('div', 'evhint',
+          'No candidates yet. Coverage near ' + (kase.landmark || 'the scene') + ' will photograph cars matching the description.'));
+      } else {
+        const grid = h('div', 'evgrid');
+        for (const p of plates) {
+          const frames = groups[p].sort((a, b) => b.conf - a.conf);
+          const bestR = frames[0];
+          const cell = h('div', 'evcell');
+          const cv = document.createElement('canvas');
+          cv.width = 352; cv.height = 200;
+          drawStill(cv, bestR);
+          cell.appendChild(cv);
+          const meta = h('div', 'evmeta');
+          meta.innerHTML = `${frames.length} frame${frames.length === 1 ? '' : 's'} · BEST CONF ${bestR.conf} · ${fmtTime(bestR.t)}`;
+          cell.appendChild(meta);
+          const btn = h('button', 'release', 'TIE FILE TO THIS CAR');
+          btn.style.cssText = 'width:100%;margin-top:4px;padding:8px 0;border:none;border-radius:7px;font-weight:800;font-size:10.5px;background:#31504f;color:#d2f2ef;';
+          btn.setAttribute('data-key', 'identify-' + kase.id + '-' + p);
+          btn.onclick = (e) => {
+            e.stopPropagation();
+            GameAudio.unlock();
+            const r = Actions.identify(state, kase.id, p);
+            if (r.ok) { closeEvidenceSheet(); openEvidenceSheet(kase.id); }
+          };
+          cell.appendChild(btn);
+          grid.appendChild(cell);
+        }
+        sheet.appendChild(grid);
+      }
+      sheet.appendChild(h('div', 'evhint',
+        'No plate on file — until you tie it to a car, nothing can be tracked, arrested, or charged.'));
+      const closer = h('div', 'evverdict');
+      const cb2 = h('button', 'release', 'KEEP COLLECTING');
+      cb2.setAttribute('data-key', 'ev-keep');
+      cb2.onclick = () => closeEvidenceSheet();
+      closer.appendChild(cb2);
+      sheet.appendChild(closer);
+      sheet.querySelector('[data-key=ev-close]').onclick = () => closeEvidenceSheet();
+      root.appendChild(sheet);
+      els.evsheet = sheet;
+      return;
+    }
 
     // the sightings map: scene, numbered frames in time order, and the
     // legs between them — impossible legs drawn dashed red and named
-    if (ev.length) {
+    // the map and leg diagnostics track only the frames still IN the
+    // file — pull a frame and the route redraws without it. Holding a
+    // PULL/RESTORE button previews the what-if before you commit.
+    const mapEv = ev.filter(r => !r.dismissed);
+    let redrawWhatIf = () => {};
+    if (mapEv.length) {
       const mapWrap = h('div', 'evmap');
       const mcv = document.createElement('canvas');
       mcv.width = 720; mcv.height = 440;
-      drawCaseMap(mcv, kase, ev);
+      drawCaseMap(mcv, kase, mapEv);
       mapWrap.appendChild(mcv);
       mapWrap.setAttribute('data-key', 'evmap');
       sheet.appendChild(mapWrap);
       const legs = h('div', 'evlegs');
-      legs.innerHTML = legDiagnostics(ev);
+      legs.innerHTML = legDiagnostics(mapEv);
       sheet.appendChild(legs);
+      redrawWhatIf = (r2, mode) => {
+        let list = ev.filter(x => !x.dismissed);
+        if (r2 && mode === 'pull') list = list.filter(x => x.id !== r2.id);
+        if (r2 && mode === 'restore') list = ev.filter(x => !x.dismissed || x.id === r2.id);
+        drawCaseMap(mcv, kase, list);
+        legs.innerHTML = (r2 ? `<b style="color:#7ad9ff">WHAT-IF ${mode === 'pull' ? 'WITHOUT' : 'WITH'} FRAME #${idxOf[r2.id]}:</b><br>` : '') +
+          legDiagnostics(list);
+      };
     }
 
     // reference frame, big
@@ -4712,6 +5255,27 @@ var UI = (() => {
       cell.appendChild(meta);
       const inConflict = pairs.some(p => p.includes(r.id));
       cell.onclick = () => { Renderer.centerOn(r.camNode); Renderer.pingNode(r.camNode, inConflict ? 'red' : 'cyan'); };
+      const canToggle = (kase.status === 'OPEN' || kase.status === 'CONTESTED') &&
+        (r.dismissed || !readStatus(r));
+      if (canToggle) {
+        const dm = h('button', null, r.dismissed ? '↩ RESTORE FRAME' : '✕ PULL FRAME');
+        dm.style.cssText = 'width:100%;margin-top:3px;padding:5px 0;border:none;border-radius:6px;' +
+          'font-size:9px;font-weight:700;letter-spacing:0.04em;' +
+          (r.dismissed ? 'background:#2f3a34;color:#abd8b8;' : 'background:#3a2f34;color:#d8b0ab;');
+        dm.setAttribute('data-key', 'ev-dismiss-' + r.id);
+        dm.onclick = (e) => {
+          e.stopPropagation();
+          const res = Actions.dismissRead(state, kase.id, r.id);
+          if (res.ok) { closeEvidenceSheet(); openEvidenceSheet(kase.id); }
+        };
+        // hold to preview the what-if on the map above
+        const mode = r.dismissed ? 'restore' : 'pull';
+        dm.addEventListener('pointerenter', () => redrawWhatIf(r, mode));
+        dm.addEventListener('pointerdown', () => redrawWhatIf(r, mode));
+        dm.addEventListener('pointerleave', () => redrawWhatIf(null));
+        dm.addEventListener('pointercancel', () => redrawWhatIf(null));
+        cell.appendChild(dm);
+      }
       grid.appendChild(cell);
     });
     sheet.appendChild(grid);
@@ -4719,15 +5283,27 @@ var UI = (() => {
     sheet.appendChild(h('div', 'evhint',
       'Compare each car with the best frame. Smudged plates and murky frames are weak; ⚠ frames cannot be the same vehicle. Tap a frame to see its pole.'));
 
-    const verdict = h('div', 'evverdict');
-    const cb = h('button', 'charge', 'CHARGE');
-    cb.setAttribute('data-key', 'ev-charge-' + kase.id);
-    cb.onclick = () => { GameAudio.unlock(); Actions.adjudicate(state, kase.id, 'CHARGE'); closeEvidenceSheet(); };
-    const rb = h('button', 'release', 'RELEASE');
-    rb.setAttribute('data-key', 'ev-release-' + kase.id);
-    rb.onclick = () => { GameAudio.unlock(); Actions.adjudicate(state, kase.id, 'RELEASE'); closeEvidenceSheet(); };
-    verdict.appendChild(cb); verdict.appendChild(rb);
-    sheet.appendChild(verdict);
+    if (kase.status === 'CONTESTED') {
+      const verdict = h('div', 'evverdict');
+      const cb = h('button', 'charge', 'CHARGE');
+      cb.setAttribute('data-key', 'ev-charge-' + kase.id);
+      cb.onclick = () => { GameAudio.unlock(); Actions.adjudicate(state, kase.id, 'CHARGE'); closeEvidenceSheet(); };
+      const rb = h('button', 'release', 'RELEASE');
+      rb.setAttribute('data-key', 'ev-release-' + kase.id);
+      rb.onclick = () => { GameAudio.unlock(); Actions.adjudicate(state, kase.id, 'RELEASE'); closeEvidenceSheet(); };
+      verdict.appendChild(cb); verdict.appendChild(rb);
+      sheet.appendChild(verdict);
+    } else {
+      sheet.appendChild(h('div', 'evhint',
+        'File building — a coherent chain of ' + CONFIG.Cases.READS_TO_CLOSE +
+        ' reads from ' + CONFIG.Cases.MIN_TRACK_CAMS + '+ cameras, anchored at the scene, makes the arrest.'));
+      const closer = h('div', 'evverdict');
+      const kb = h('button', 'release', 'BACK TO THE STREETS');
+      kb.setAttribute('data-key', 'ev-keep');
+      kb.onclick = () => closeEvidenceSheet();
+      closer.appendChild(kb);
+      sheet.appendChild(closer);
+    }
 
     sheet.querySelector('[data-key=ev-close]').onclick = () => closeEvidenceSheet();
     root.appendChild(sheet);
@@ -4768,6 +5344,12 @@ var UI = (() => {
     if (pick.kind === 'camera') {
       const cam = CameraSystem.byId(state, pick.id);
       if (!cam) return;
+      if (cam.type === 'OFFICER') {
+        const left = Math.max(0, Math.ceil(CONFIG.Cameras.OFFICER.TOUR_SECONDS - (state.time - cam.builtAt)));
+        identity('OFFICER POST — eyewitness reads file instantly · tour ends in ' + left + 's');
+        Renderer.flashSightline(cam.id);
+        return;
+      }
       const cond = cam.tags >= 2 ? 'LENS BADLY FOULED' : cam.tags === 1 ? 'LENS FOULED' : 'CLEAN';
       const link = CameraSystem.relayAdjacent(state, cam) ? 'RELAY-LINKED'
         : cam.drive.length + ' unsent · uploads in ' + Math.max(0, Math.ceil(CONFIG.Retention.UPLOAD_INTERVAL - (state.time - cam.lastUpload))) + 's';
@@ -4813,12 +5395,13 @@ var UI = (() => {
     menu.setAttribute('data-key', 'ctxmenu');
 
     const colEyes = h('div', 'ctxcol', '<div class="colhead">EYES</div>');
-    for (const [type, ex] of [['POST', '2 blocks, one corner'], ['LONG', '5 blocks, one way'], ['DOME', 'this corner, all ways']]) {
+    for (const [type, ex] of [['POST', '2 blocks, one corner'], ['LONG', '5 blocks, one way'], ['DOME', 'this corner, all ways'], ['OFFICER', 'eyewitness, 45s tour']]) {
       const spec = CONFIG.Cameras[type];
       let refused = null;
       if (cam) refused = 'POLE OCCUPIED';
       else if (state.budget < spec.COST) refused = 'BUDGET SHORT ' + Math.ceil(spec.COST - state.budget);
-      const b = ctxButton('buy-' + type.toLowerCase(), 'CYCLOPS ' + type, spec.COST, ex, refused);
+      const b = ctxButton('buy-' + type.toLowerCase(),
+        type === 'OFFICER' ? 'OFFICER POST' : 'CYCLOPS ' + type, spec.COST, ex, refused);
       b.onclick = (e) => {
         e.stopPropagation(); GameAudio.unlock();
         if (refused) { identity(refused); GameAudio.sounds.deny(); return; }
@@ -4853,7 +5436,8 @@ var UI = (() => {
         b.onclick = (e) => {
           e.stopPropagation(); GameAudio.unlock();
           if (refused) { identity(refused); GameAudio.sounds.deny(); return; }
-          Actions.upgrade(state, cam.id, key.toUpperCase() === 'CLEAN' ? 'CLEAN' : key.toUpperCase());
+          const r = Actions.upgrade(state, cam.id, key.toUpperCase() === 'CLEAN' ? 'CLEAN' : key.toUpperCase());
+          if (!r.ok) { identity(r.reason); GameAudio.sounds.deny(); return; }
           GameAudio.sounds.confirm();
           closeMenu();
         };
@@ -5442,6 +6026,29 @@ var Demo = (() => {
     return el && !el.getAttribute('data-refused');
   }
 
+  // a visible PRESS: the button depresses and flashes as the AI clicks it
+  function pressFx(el) {
+    if (!el) return;
+    el.classList.add('demopress');
+    setTimeout(() => { if (el.isConnected) el.classList.remove('demopress'); }, 160);
+    el.click();
+  }
+
+  // the demonstrator visibly reads the file: down through the frames,
+  // then back up to the verdict row
+  function scrollSheet(seconds) {
+    const sheet = document.querySelector('[data-key=evsheet]');
+    if (!sheet) return;
+    const max = sheet.scrollHeight - sheet.clientHeight;
+    if (max <= 0) return;
+    const t0 = performance.now();
+    const iv = setInterval(() => {
+      const k = (performance.now() - t0) / (seconds * 1000);
+      if (k >= 1 || !document.body.contains(sheet)) { clearInterval(iv); return; }
+      sheet.scrollTop = max * (k < 0.6 ? k / 0.6 : 1 - (k - 0.6) / 0.4);
+    }, 40);
+  }
+
   function stage(key, steps) {
     const D = CONFIG.Demo;
     let t = wall;
@@ -5468,17 +6075,45 @@ var Demo = (() => {
       const gr = CaseSystem.grade(state, ev);
       const charge = (avg / 100 + 0.15 * Math.min(ev.length, 4) - (gr.contradiction ? 0.35 : 0)) > STRAT.ADJ_BIAS;
       const btnKey = 'ev-' + (charge ? 'charge-' : 'release-') + contested.id;
-      // open the case file, visibly read the stills, then rule
+      // open the case file, visibly SCROLL through the frames, then rule
       stage('adjudicate', [
         { delay: 0.3, fn: () => UI.openEvidenceSheet(contested.id) },
-        { delay: 1.6, fn: () => lit(UI.getEl(btnKey)) },
+        { delay: 0.5, fn: () => scrollSheet(2.2) },
+        { delay: 2.6, fn: () => lit(UI.getEl(btnKey)) },
         { delay: D.HIGHLIGHT_S + 0.5, fn: () => {
           const el = UI.getEl(btnKey);
-          if (pressable(el)) el.click(); else UI.closeEvidenceSheet();
+          if (pressable(el)) pressFx(el); else UI.closeEvidenceSheet();
           unlight();
         } }
       ]);
       return;
+    }
+
+    // 1.5 tie an unidentified file to its strongest candidate, visibly
+    const untied = state.cases.find(c => c.status === 'OPEN' && c.plate === null &&
+      c._candPlates && Object.keys(c._candPlates).length && state.time - c.openedAt > 6);
+    if (untied && ok('identify')) {
+      const scores = {};
+      for (const r of state.reads) {
+        if (r.candidateOf === untied.id) scores[r.actualPlate] = (scores[r.actualPlate] || 0) + r.conf;
+      }
+      let bestPlate = null, bs = -1;
+      for (const p in scores) if (scores[p] > bs) { bs = scores[p]; bestPlate = p; }
+      if (bestPlate) {
+        const key = 'identify-' + untied.id + '-' + bestPlate;
+        stage('identify', [
+          { delay: 0.3, fn: () => UI.openEvidenceSheet(untied.id) },
+          { delay: 0.4, fn: () => scrollSheet(1.6) },
+          { delay: 1.9, fn: () => lit(UI.getEl(key)) },
+          { delay: D.PRESS_S + 0.4, fn: () => {
+            const el = UI.getEl(key);
+            if (pressable(el)) pressFx(el); else UI.closeEvidenceSheet();
+            unlight();
+          } },
+          { delay: 1.3, fn: () => UI.closeEvidenceSheet() }
+        ]);
+        return;
+      }
     }
 
     // 2. rain: move the dial down, visibly
@@ -5512,7 +6147,7 @@ var Demo = (() => {
       if (state.cameras.length >= 3) {
         const near = state.cameras.filter(c => c.type !== 'RELAY' &&
           CaseSystem.nodeDist(state, c.node, state.map.syndicate) <= CONFIG.Cases.ANCHOR_DIST).length;
-        if (near < 2) site = pickSiteNear(state.map.syndicate, 3);
+        if (near < 3) site = pickSiteNear(state.map.syndicate, 3);
       }
       if (!site) site = pickSite();
       if (site !== null) {
@@ -5528,24 +6163,65 @@ var Demo = (() => {
           { delay: D.HIGHLIGHT_S, fn: () => lit(UI.getEl(buyKey)) },
           { delay: D.PRESS_S + 0.3, fn: () => {
             const el = UI.getEl(buyKey);
-            if (pressable(el)) el.click(); else { UI.closeMenu(); blacklist.set('place', wall + CONFIG.Demo.BLACKLIST_S); }
+            if (pressable(el)) pressFx(el); else { UI.closeMenu(); blacklist.set('place', wall + CONFIG.Demo.BLACKLIST_S); }
             unlight();
           } }
         ];
         // aim the quadrant with visible TURN presses (fixed-sector doctrine)
         if (!relayTurn) {
           for (let t = 0; t < site.dir; t++) {
-            steps.push({ delay: 0.35, fn: () => { const el = UI.getEl('turn-cw'); if (el) { lit(el); el.click(); } } });
+            steps.push({ delay: 0.35, fn: () => { const el = UI.getEl('turn-cw'); if (el) { lit(el); pressFx(el); } } });
           }
         }
         steps.push({ delay: D.CONFIRM_S + 0.35, fn: () => lit(UI.getEl('confirm')) });
         steps.push({ delay: D.CONFIRM_S, fn: () => {
           const el = UI.getEl('confirm');
-          if (pressable(el)) el.click(); else { UI.cancelGhost(); blacklist.set('place', wall + CONFIG.Demo.BLACKLIST_S); }
+          if (pressable(el)) pressFx(el); else { UI.cancelGhost(); blacklist.set('place', wall + CONFIG.Demo.BLACKLIST_S); }
           unlight();
         } });
         stage('place', steps);
         return;
+      }
+    }
+
+    // 3.5 relocate a camera the crews have learned around — the §13
+    // counterplay, played through the real menu → RELOCATE → tap → CONFIRM
+    if (ok('relocate') && state.cameras.length >= 5 && state.budget > CONFIG.Cameras.POST.COST) {
+      const cutoff = state.time - 32;
+      const idle = state.cameras.find(c => c.type !== 'RELAY' &&
+        state.time - c.builtAt > 32 &&
+        !state.reads.some(r => r.camId === c.id && r.t > cutoff));
+      if (idle) {
+        const spot = pickSite();
+        if (spot && spot.node !== idle.node) {
+          stage('relocate', [
+            { delay: 0.2, fn: () => { if (Renderer.userIdleSeconds() > 6) Renderer.centerOn(idle.node); } },
+            { delay: 0.5, fn: () => {
+              const s = Renderer.nodeScreen(idle.node);
+              UI.openMenu(idle.node, s.x, s.y);
+            } },
+            { delay: D.HIGHLIGHT_S, fn: () => lit(UI.getEl('relocate')) },
+            { delay: D.PRESS_S + 0.3, fn: () => {
+              const el = UI.getEl('relocate');
+              if (pressable(el)) pressFx(el); else { UI.closeMenu(); blacklist.set('relocate', wall + CONFIG.Demo.BLACKLIST_S); }
+              unlight();
+            } },
+            { delay: 0.5, fn: () => {           // tap the new pole
+              const s = Renderer.nodeScreen(spot.node);
+              UI.simulateTapAt(s.x, s.y);
+            } },
+            ...Array.from({ length: spot.dir }, () => (
+              { delay: 0.3, fn: () => { const el = UI.getEl('turn-cw'); if (el) { lit(el); pressFx(el); } } }
+            )),
+            { delay: D.CONFIRM_S + 0.3, fn: () => lit(UI.getEl('confirm')) },
+            { delay: D.CONFIRM_S, fn: () => {
+              const el = UI.getEl('confirm');
+              if (pressable(el)) pressFx(el); else UI.cancelGhost();
+              unlight();
+            } }
+          ]);
+          return;
+        }
       }
     }
 
@@ -5558,7 +6234,7 @@ var Demo = (() => {
         { delay: D.HIGHLIGHT_S, fn: () => lit(UI.getEl('clean')) },
         { delay: D.PRESS_S + 0.3, fn: () => {
           const el = UI.getEl('clean');
-          if (pressable(el)) el.click(); else { UI.closeMenu(); blacklist.set('clean', wall + CONFIG.Demo.BLACKLIST_S); }
+          if (pressable(el)) pressFx(el); else { UI.closeMenu(); blacklist.set('clean', wall + CONFIG.Demo.BLACKLIST_S); }
           unlight();
         } }
       ]);
