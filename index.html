@@ -22,7 +22,7 @@
 <script>
 'use strict';
 /* BLIND SPOT — a camera-network tower defense prototype. */
-window.BUILDSTAMP = 'BUILD 2026-08-18 05:04 UTC';
+window.BUILDSTAMP = 'BUILD 2026-08-18 05:39 UTC';
 
 // ============================================================
 // CONFIG
@@ -1841,9 +1841,10 @@ var CaseSystem = (() => {
       return;
     }
     kase.status = 'COLD';
+    kase.coldReason = reason || 'expired';
     state.clrCold += 1;
     state.stats.colds++;
-    State.emit(state, { type: 'caseCold', caseId: kase.id, reason: reason || 'expired' });
+    State.emit(state, { type: 'caseCold', caseId: kase.id, reason: kase.coldReason });
   }
 
   // ---- the adjudication verb (§9) ----
@@ -4490,8 +4491,8 @@ var UI = (() => {
 .evhead { display:flex; align-items:baseline; gap:8px; margin-bottom:8px; }
 .evhead b { font-size:13px; letter-spacing:0.05em; color:#ffc84a; font-family:monospace; }
 .evhead span { font-size:9.5px; color:#8b93a5; flex:1; }
-.evhead button { background:#232837; border:1px solid #343b4e; color:#aab2c0; border-radius:7px;
-  padding:4px 10px; font-size:12px; font-weight:700; }
+.evhead button { background:#232837; border:1px solid #343b4e; color:#aab2c0; border-radius:9px;
+  padding:10px 16px; font-size:15px; font-weight:700; min-width:44px; min-height:40px; }
 .evref { margin-bottom:8px; }
 .evref canvas, .evcell canvas { display:block; width:100%; border-radius:8px; background:#000; }
 .evmeta { font-size:8.5px; color:#8b93a5; margin-top:2px; letter-spacing:0.04em; line-height:1.35; }
@@ -4510,6 +4511,15 @@ var UI = (() => {
   font-weight:800; letter-spacing:0.06em; }
 .evverdict .charge { background:#6e3b36; color:#ffd9d5; }
 .evverdict .release { background:#31504f; color:#d2f2ef; }
+.filesbtn { background:#161922; border:1px solid #2a2e3a; color:#8b93a5; border-radius:8px;
+  padding:3px 9px; font-size:9.5px; font-weight:700; letter-spacing:0.08em; }
+.ledgerrow { display:flex; align-items:baseline; gap:7px; padding:7px 4px; border-bottom:1px solid #1c2029;
+  font-size:9.5px; }
+.ledgerrow .lplate { font-family:monospace; font-weight:700; color:#ffc84a; width:64px; flex-shrink:0; }
+.ledgerrow .lkind { color:#8b93a5; flex:1; min-width:0; line-height:1.35; }
+.ledgerrow .ldet { font-weight:800; letter-spacing:0.04em; text-align:right; flex-shrink:0; line-height:1.35; }
+.ledgersum { display:flex; gap:10px; flex-wrap:wrap; font-size:9.5px; color:#8b93a5; margin:2px 0 8px; }
+.ledgersum b { color:#d8dde8; }
 .evstamp { position:fixed; left:50%; top:44%; z-index:60; pointer-events:none;
   transform:translate(-50%,-50%) rotate(-12deg); font-size:34px; font-weight:900;
   letter-spacing:0.14em; padding:10px 26px; border:5px solid; border-radius:10px;
@@ -4559,6 +4569,7 @@ var UI = (() => {
       <div class="hudrow">
         <span class="shiftclock" data-key="shiftclock">—</span>
         <span class="mood" data-key="mood"></span>
+        <button class="filesbtn" data-key="ledger">FILES</button>
         <span class="seedtag" data-key="seedtag"></span>
       </div>
       <div class="meters">
@@ -4588,6 +4599,11 @@ var UI = (() => {
       Actions.setThreshold(state, parseInt(els.dial.value, 10));
       if (hooks.onDialTouched) hooks.onDialTouched();
     });
+    els.hud.querySelector('[data-key=ledger]').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!state) return;
+      if (ledgerOpen) closeLedger(); else openLedger();
+    });
 
     bindInput();
   }
@@ -4598,7 +4614,7 @@ var UI = (() => {
     ghostMode = null; menuNode = null; relocPick = null;
     cardEls.clear();
     els.caserail.innerHTML = '';
-    closeMenu(); hideConfirm(); closeEvidenceSheet();
+    closeMenu(); hideConfirm(); closeEvidenceSheet(); closeLedger();
     els.dial.value = s.threshold;
     els.hud.querySelector('[data-key=seedtag]').textContent = 'seed ' + s.seed;
   }
@@ -4641,6 +4657,9 @@ var UI = (() => {
     }
 
     syncCards();
+
+    // an open ledger stays current (trial countdowns tick, files land)
+    if (ledgerOpen && state.time - ledgerBuiltAt > 1.5) openLedger();
 
     // an open case file follows its case: resolved or expired → it closes
     if (evsheetCaseId !== null) {
@@ -5128,6 +5147,7 @@ var UI = (() => {
 
   function openEvidenceSheet(caseId) {
     closeEvidenceSheet();
+    if (ledgerOpen) closeLedger();
     const kase = CaseSystem.byId(state, caseId);
     if (!kase || (kase.status !== 'CONTESTED' && kase.status !== 'OPEN')) return;
     evsheetCaseId = caseId;
@@ -5328,6 +5348,90 @@ var UI = (() => {
   function closeEvidenceSheet() {
     if (els.evsheet) { els.evsheet.remove(); els.evsheet = null; }
     evsheetCaseId = null;
+  }
+
+  // ---------- the ledger: every file, its determination, and what the
+  // trial revealed — a reckoning on demand (player-directed). Convictions
+  // expose the truth (a wrongful one names the plate you SHOULD have
+  // charged); releases never do — you don't learn what didn't happen.
+  let ledgerOpen = false, ledgerBuiltAt = -9;
+
+  function caseDetermination(kase) {
+    if (kase.status === 'CLOSED') {
+      if (kase.falseCharge) {
+        const wrong = (kase.closedTriple || []).map(id => state.reads[id - 1])
+          .find(r => r && !r.trueMatch);
+        return ['WRONG PLATE' + (wrong ? ' — was ' + wrong.actualPlate : ''), '#ff8a80'];
+      }
+      if (kase.collapsed) return ['COLLAPSED IN COURT', '#b0813a'];
+      return ['CONVICTED', '#7ad9a0'];
+    }
+    if (kase.status === 'ARREST') return ['TRIAL IN ' + Math.max(0, Math.ceil(kase.convictAt - state.time)) + 's', '#53c8ff'];
+    if (kase.status === 'RELEASED') return ['RELEASED — NOTHING CAME OF IT', '#7ad9c0'];
+    if (kase.status === 'COLD') {
+      if (kase.coldReason === 'released') return ['RELEASED — THE TRAIL DIED', '#8b93a5'];
+      if (kase.coldReason === 'auto-release') return ['EXPIRED UNANSWERED', '#8b93a5'];
+      return ['WENT COLD', '#8b93a5'];
+    }
+    if (kase.status === 'LAPSED') return ['LAPSED — NO LEADS', '#5a6070'];
+    if (kase.status === 'CONTESTED') return ['CONTESTED — ON YOUR DESK', '#ffb44a'];
+    if (kase.plate === null) return ['COLLECTING CANDIDATES', '#b0813a'];
+    return ['LIVE', '#ffc84a'];
+  }
+
+  function openLedger() {
+    closeEvidenceSheet(); closeLedger(); closeMenu();
+    ledgerOpen = true;
+    ledgerBuiltAt = state.time;
+    const sheet = h('div', 'evsheet');
+    sheet.setAttribute('data-key', 'ledgersheet');
+    const st = state.stats;
+    const wrongful = st.falseCharges;
+    const convicted = state.cases.filter(c => c.status === 'CLOSED' && !c.falseCharge && !c.collapsed).length;
+    const collapsed = state.cases.filter(c => c.collapsed).length;
+    sheet.innerHTML = `<div class="evhead"><b>THE FILES</b>
+      <span>every case this shift ran — the determination, and what the trial showed</span>
+      <button data-key="ledger-close">✕</button></div>
+      <div class="ledgersum">
+        <span><b>${convicted}</b> convicted</span>
+        <span style="color:#ff8a80"><b>${wrongful}</b> wrongful</span>
+        <span><b>${collapsed}</b> collapsed</span>
+        <span><b>${st.colds}</b> cold</span>
+        <span><b>${st.lapsed || 0}</b> lapsed</span>
+        <span>clearance <b>${Math.floor(State.clearance(state))}%</b></span>
+        <span>trust <b>${Math.floor(state.trust)}</b></span>
+      </div>`;
+    const live = (c) => c.status === 'OPEN' || c.status === 'CONTESTED' || c.status === 'ARREST';
+    const rows = state.cases.slice().sort((a, b) =>
+      (live(b) ? 1 : 0) - (live(a) ? 1 : 0) || b.openedAt - a.openedAt);
+    for (const kase of rows) {
+      const row = h('div', 'ledgerrow');
+      row.setAttribute('data-key', 'ledger-' + kase.id);
+      const [det, col] = caseDetermination(kase);
+      row.innerHTML = `<span class="lplate">${kase.plate || '<i style="color:#8b93a5">no plate</i>'}</span>
+        <span class="lkind">${kase.kind || kase.type} at ${kase.landmark || '—'} · ${fmtTime(kase.openedAt)}${kase.witnessDesc ? ' · "a ' + kase.witnessDesc + '"' : ''}</span>
+        <span class="ldet" style="color:${col}">${det}</span>`;
+      row.onclick = () => {
+        if (kase.status === 'OPEN' || kase.status === 'CONTESTED') {
+          closeLedger();
+          openEvidenceSheet(kase.id);
+        } else {
+          Renderer.centerOn(kase.arrestNode !== undefined ? kase.arrestNode : kase.spawnNode);
+          Renderer.pingNode(kase.arrestNode !== undefined ? kase.arrestNode : kase.spawnNode);
+          identity((kase.kind || kase.type) + ' — ' + caseDetermination(kase)[0]);
+        }
+      };
+      sheet.appendChild(row);
+    }
+    if (!rows.length) sheet.appendChild(h('div', 'evhint', 'No files yet. The city is warming up.'));
+    sheet.querySelector('[data-key=ledger-close]').onclick = () => closeLedger();
+    root.appendChild(sheet);
+    els.ledger = sheet;
+  }
+
+  function closeLedger() {
+    if (els.ledger) { els.ledger.remove(); els.ledger = null; }
+    ledgerOpen = false;
   }
 
   // The ruling is STAMPED on the file — CHARGED, RELEASED, FILE TIED —
@@ -5628,7 +5732,7 @@ var UI = (() => {
   }
 
   function showVerdict(v) {
-    cancelGhost(); closeMenu(); closeEvidenceSheet();
+    cancelGhost(); closeMenu(); closeEvidenceSheet(); closeLedger();
     hideOverlay();
     const o = h('div', 'overlay');
     o.setAttribute('data-key', 'verdict');
@@ -5780,6 +5884,10 @@ var UI = (() => {
 
   function onTap(x, y) {
     if (!state || state.verdict) return;
+    // any sheet open? a tap on the map dismisses it (player-directed:
+    // the ✕ alone was too small a door out)
+    if (els.evsheet) { closeEvidenceSheet(); return; }
+    if (ledgerOpen) { closeLedger(); return; }
     // demo mode is a guided tour, not a locked door (player-directed):
     // pan, zoom and tap-to-name all work; only the chip hands the desk back
     if (hooks.isDemoMode && hooks.isDemoMode()) {
@@ -5827,7 +5935,7 @@ var UI = (() => {
   return {
     init, setMatch, update, identity,
     showTitle, showVerdict, hideOverlay,
-    openEvidenceSheet, closeEvidenceSheet,
+    openEvidenceSheet, closeEvidenceSheet, openLedger, closeLedger,
     openMenu, closeMenu, startGhost, cancelGhost, positionConfirm,
     setSuppressTaps: (v) => { suppressTaps = v; },
     getEl: (key) => root.querySelector(`[data-key="${key}"]`),

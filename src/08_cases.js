@@ -414,9 +414,10 @@ var CaseSystem = (() => {
       return;
     }
     kase.status = 'COLD';
+    kase.coldReason = reason || 'expired';
     state.clrCold += 1;
     state.stats.colds++;
-    State.emit(state, { type: 'caseCold', caseId: kase.id, reason: reason || 'expired' });
+    State.emit(state, { type: 'caseCold', caseId: kase.id, reason: kase.coldReason });
   }
 
   // ---- the adjudication verb (§9) ----
