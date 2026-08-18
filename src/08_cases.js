@@ -220,7 +220,8 @@ var CaseSystem = (() => {
       };
       // the witness saw the actual car — usually well, sometimes vaguely
       kase.witnessDesc = witnessDescription(carIdentity(kase.truePlate),
-        State.rngNext(state, 'witness'), State.rngNext(state, 'witness'));
+        State.rngNext(state, 'witness'), State.rngNext(state, 'witness'),
+        State.rngNext(state, 'witness'));
       state.cases.push(kase);
       if (kase.plate === null) {
         State.log(state, 'No plate on the file — just "a ' + kase.witnessDesc + '". Candidates will collect on the card.', 'first-unidentified');
@@ -368,8 +369,9 @@ var CaseSystem = (() => {
     kase.status = 'CLOSED';
     const triple = (kase.closedTriple || []).map(id => state.reads[id - 1]).filter(Boolean);
     // the file must still stand up: enough of the closing reads unexpired
+    // (a scene ID rests on its single frame; a chain can lose one)
     const alive = triple.filter(r => !r.lost && r.expiresAt !== undefined && state.time < r.expiresAt).length;
-    kase.collapsed = alive < CONFIG.Cases.READS_TO_CLOSE - 1;
+    kase.collapsed = alive < Math.max(1, triple.length - 1);
 
     if (kase.falseCharge) {
       // the trap (§7.1): the wrongful conviction still pays
@@ -549,6 +551,27 @@ var CaseSystem = (() => {
       const S = CONFIG.Cases.CLOSURE_CONFIDENCE_SUM;
 
       if (kase.status === 'OPEN') {
+        // THE SCENE ID (player-directed): one CLEAN frame — unambiguous,
+        // near the scene, in the crime window, of a car matching the
+        // witness — makes the case by itself. Caught at the scene beats
+        // tracked across town. (A clean frame can never be a misread, so
+        // this path cannot convict the wrong plate.)
+        if (kase.type !== 'VANDAL') {
+          const sceneId = ev.find(r =>
+            r.conf >= CONFIG.Confidence.CLARITY &&
+            r.t - kase.openedAt <= CONFIG.Cases.SCENE_ID_WINDOW &&
+            (() => {
+              const s = state.map.segs[r.segId];
+              return s && Math.min(nodeDist(state, s.a, kase.spawnNode),
+                nodeDist(state, s.b, kase.spawnNode)) <= CONFIG.Cases.SCENE_ID_DIST;
+            })() &&
+            descriptionMatches(kase.witnessDesc, carIdentity(r.actualPlate)));
+          if (sceneId) {
+            State.log(state, 'Made at the scene — ' + kase.plate + ' (a ' + kase.witnessDesc + ').', 'first-scene-id');
+            close(state, kase, [sceneId], 'scene');
+            continue;
+          }
+        }
         if (g.best && g.bestSum >= S && !g.contradiction) {
           close(state, kase, g.best, 'auto');
           continue;

@@ -105,11 +105,16 @@ function carIdentity(plate) {
 }
 
 // What a witness actually says: usually the colour and type, sometimes
-// just "a dark car" — vague enough that the stills still matter.
-function witnessDescription(identity, r1, r2) {
+// just "a dark car" — and sometimes a telling specific ("dented panel")
+// that sharpens the lineup to almost nothing.
+function witnessDescription(identity, r1, r2, r3) {
   const color = r1 < 0.7 ? identity.color.name : (identity.color.tone === 'DARK' ? 'DARK' : 'LIGHT-COLORED');
   const type = r2 < 0.75 ? identity.type : 'CAR';
-  return color + ' ' + type;
+  let desc = color + ' ' + type;
+  if (identity.damage.length && (r3 !== undefined ? r3 : 1) < 0.5) {
+    desc += ', ' + identity.damage[0];
+  }
+  return desc;
 }
 
 // Does a photographed car fit what the witness said? The description is
@@ -117,14 +122,18 @@ function witnessDescription(identity, r1, r2) {
 // may be just CAR.
 function descriptionMatches(desc, identity) {
   if (!desc) return false;
-  const firstSpace = desc.indexOf(' ');
-  const colorWord = desc.slice(0, firstSpace);
-  const typeWord = desc.slice(firstSpace + 1);
+  let main = desc, damageWord = null;
+  const comma = desc.indexOf(',');
+  if (comma >= 0) { main = desc.slice(0, comma); damageWord = desc.slice(comma + 2); }
+  const firstSpace = main.indexOf(' ');
+  const colorWord = main.slice(0, firstSpace);
+  const typeWord = main.slice(firstSpace + 1);
   const colorOK = colorWord === identity.color.name ||
     (colorWord === 'DARK' && identity.color.tone === 'DARK') ||
     (colorWord === 'LIGHT-COLORED' && identity.color.tone === 'LIGHT');
   const typeOK = typeWord === 'CAR' || typeWord === identity.type;
-  return colorOK && typeOK;
+  const damageOK = !damageWord || identity.damage.includes(damageWord);
+  return colorOK && typeOK && damageOK;
 }
 
 // Threshold band label for a value, from CONFIG bands [[min,label],...].

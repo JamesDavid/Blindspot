@@ -404,10 +404,20 @@ var UI = (() => {
         const tail = kase.status === 'CLOSED'
           ? (kase.falseCharge ? ' · WRONG PLATE' : kase.collapsed ? ' · COLLAPSED' : ' · CONVICTED')
           : kase.status === 'COLD' ? ' · COLD' : '';
+        // the chain's strength is visible, so a stuck case is never a
+        // silent mystery (player-directed: "8 frames and couldn't close")
+        let chainLine = '';
+        if (kase.status === 'OPEN' && kase.type !== 'VANDAL' && ev.length >= 2) {
+          const gr = CaseSystem.grade(state, ev, CaseSystem.gradeOpts(kase));
+          const S = CONFIG.Cases.CLOSURE_CONFIDENCE_SUM;
+          if (gr.bestSum > 0 && gr.bestSum < S) {
+            chainLine = `<div class="evmeta" style="margin:1px 0;color:#b0813a">chain ${gr.bestSum} / ${S} — needs cleaner reads</div>`;
+          }
+        }
         el.innerHTML = `
           <div class="typ">${kase.kind || (kase.type === 'VANDAL' ? 'VANDALISM' : kase.type)}${tail}</div>
           <div class="plate">${kase.plate || 'NO PLATE'}</div>
-          <div class="pips">${pips}</div>
+          <div class="pips">${pips}</div>${chainLine}
           <div class="timer"><i style="width:${frac * 100}%"></i></div>`;
       }
       if (kase.status === 'COLD') kase._coldShownUntil = state.time + 1.6;
@@ -1030,9 +1040,15 @@ var UI = (() => {
       verdict.appendChild(cb); verdict.appendChild(rb);
       sheet.appendChild(verdict);
     } else {
+      const grB = CaseSystem.grade(state, active, CaseSystem.gradeOpts(kase));
+      const SB = CONFIG.Cases.CLOSURE_CONFIDENCE_SUM;
+      const chainTxt = grB.bestSum > 0
+        ? `Strongest chain: <b style="color:${grB.bestSum >= SB ? '#7ad9a0' : '#b0813a'}">${grB.bestSum} / ${SB}</b>${grB.bestSum < SB ? ' — the frames agree but they are too weak; closer, head-on reads score higher' : ''}.`
+        : 'No coherent chain yet.';
       sheet.appendChild(h('div', 'evhint',
-        'File building — a coherent chain of ' + CONFIG.Cases.READS_TO_CLOSE +
-        ' reads from ' + CONFIG.Cases.MIN_TRACK_CAMS + '+ cameras, anchored at the scene, makes the arrest.'));
+        'Two ways to make the arrest: a CLEAN frame (conf ' + CONFIG.Confidence.CLARITY +
+        '+) at the scene within the crime window — or a chain of ' + CONFIG.Cases.READS_TO_CLOSE +
+        ' reads from ' + CONFIG.Cases.MIN_TRACK_CAMS + '+ cameras summing ' + SB + '. ' + chainTxt));
       const closer = h('div', 'evverdict');
       const kb = h('button', 'release', 'BACK TO THE STREETS');
       kb.setAttribute('data-key', 'ev-keep');

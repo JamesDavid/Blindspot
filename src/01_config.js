@@ -45,7 +45,9 @@ var CONFIG = Object.freeze({
     IDENTIFY_EXTEND: 0.6,           // tying the file renews it by this fraction of a lifetime — the investigation properly starts at the lineup, not the crime
     CANDIDATE_DIST: 5,              // player-directed: clearly-photographed cars matching the description within this many blocks of the scene become candidates
     CANDIDATE_MAX: 4,               // player-directed: at most this many distinct candidate plates per file — a lineup, not a phonebook
-    CLOSURE_CONFIDENCE_SUM: 210,    // spec-authored: three serviceable reads or two clean ones plus a poor one
+    CLOSURE_CONFIDENCE_SUM: 210,    // spec-authored; re-swept post-scene-ID: lowering it only bred wrongful convictions — the scene ID is the accessible path, the chain is the strong one
+    SCENE_ID_DIST: 2,               // player-directed ("just one near the scene at the time of the crime"): a CLEAN frame this close to the scene…
+    SCENE_ID_WINDOW: 14,            // …within this many seconds of the crime, of a car matching the witness, closes the case by itself — made at the scene
     LIFETIME_SECONDS: 90,           // re-swept (test/opt_lifetime.js) after quadrant cameras: 90x3 (51.0) now clearly beats 75x3 (41.2) — narrower sectors need longer files; the optimum moved with the mechanics again
     CONTESTED_BAND: 12,             // judgment-tuned: width of the near-bar band that surfaces a card
     CONTESTED_PER_SHIFT_MIN: 2,     // spec-authored: enough to matter
