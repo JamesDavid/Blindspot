@@ -136,6 +136,13 @@ var UI = (() => {
   font-weight:800; letter-spacing:0.06em; }
 .evverdict .charge { background:#6e3b36; color:#ffd9d5; }
 .evverdict .release { background:#31504f; color:#d2f2ef; }
+.evstamp { position:fixed; left:50%; top:44%; z-index:60; pointer-events:none;
+  transform:translate(-50%,-50%) rotate(-12deg); font-size:34px; font-weight:900;
+  letter-spacing:0.14em; padding:10px 26px; border:5px solid; border-radius:10px;
+  background:rgba(10,12,17,0.55); white-space:nowrap;
+  animation:stampin 0.22s cubic-bezier(0.2,2.2,0.5,1) both; }
+@keyframes stampin { from { transform:translate(-50%,-50%) rotate(-12deg) scale(2.4); opacity:0; }
+  to { transform:translate(-50%,-50%) rotate(-12deg) scale(1); opacity:1; } }
 .overlay { position:absolute; inset:0; background:#05060af0; display:flex; flex-direction:column;
   align-items:center; justify-content:center; z-index:50; text-align:center; padding:20px; }
 .overlaid .hud, .overlaid .caserail, .overlaid .ticker, .overlaid .identity { display:none; }
@@ -803,7 +810,7 @@ var UI = (() => {
             e.stopPropagation();
             GameAudio.unlock();
             const r = Actions.identify(state, kase.id, p);
-            if (r.ok) { closeEvidenceSheet(); openEvidenceSheet(kase.id); }
+            if (r.ok) stampSheet('FILE TIED — ' + p, '#ffc84a', kase.id);
           };
           cell.appendChild(btn);
           grid.appendChild(cell);
@@ -913,10 +920,18 @@ var UI = (() => {
       const verdict = h('div', 'evverdict');
       const cb = h('button', 'charge', 'CHARGE');
       cb.setAttribute('data-key', 'ev-charge-' + kase.id);
-      cb.onclick = () => { GameAudio.unlock(); Actions.adjudicate(state, kase.id, 'CHARGE'); closeEvidenceSheet(); };
+      cb.onclick = () => {
+        GameAudio.unlock();
+        const r = Actions.adjudicate(state, kase.id, 'CHARGE');
+        if (r.ok) stampSheet('CHARGED — ' + kase.plate, '#ff8a80');
+      };
       const rb = h('button', 'release', 'RELEASE');
       rb.setAttribute('data-key', 'ev-release-' + kase.id);
-      rb.onclick = () => { GameAudio.unlock(); Actions.adjudicate(state, kase.id, 'RELEASE'); closeEvidenceSheet(); };
+      rb.onclick = () => {
+        GameAudio.unlock();
+        const r = Actions.adjudicate(state, kase.id, 'RELEASE');
+        if (r.ok) stampSheet('RELEASED', '#7ad9c0');
+      };
       verdict.appendChild(cb); verdict.appendChild(rb);
       sheet.appendChild(verdict);
     } else {
@@ -939,6 +954,23 @@ var UI = (() => {
   function closeEvidenceSheet() {
     if (els.evsheet) { els.evsheet.remove(); els.evsheet = null; }
     evsheetCaseId = null;
+  }
+
+  // The ruling is STAMPED on the file — CHARGED, RELEASED, FILE TIED —
+  // held long enough to read, then the sheet closes (player-directed:
+  // the action taken must be visible, for humans and for the demo AI).
+  function stampSheet(text, color, thenReopenCaseId) {
+    const st = h('div', 'evstamp', text);
+    st.style.color = color;
+    st.style.borderColor = color;
+    st.setAttribute('data-key', 'evstamp');
+    root.appendChild(st);
+    evsheetCaseId = null;             // freeze auto-close reactions during the hold
+    setTimeout(() => {
+      st.remove();
+      closeEvidenceSheet();
+      if (thenReopenCaseId !== undefined) openEvidenceSheet(thenReopenCaseId);
+    }, 1100);
   }
 
   // ---------- identity pill: tap anything and it names itself ----------

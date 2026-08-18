@@ -98,11 +98,12 @@ var Demo = (() => {
         { delay: 0.3, fn: () => UI.openEvidenceSheet(contested.id) },
         { delay: 0.5, fn: () => scrollSheet(2.2) },
         { delay: 2.6, fn: () => lit(UI.getEl(btnKey)) },
-        { delay: D.HIGHLIGHT_S + 0.5, fn: () => {
+        { delay: 1.3, fn: () => {          // linger on the choice, then press
           const el = UI.getEl(btnKey);
           if (pressable(el)) pressFx(el); else UI.closeEvidenceSheet();
           unlight();
-        } }
+        } },
+        { delay: 1.6, fn: () => {} }       // hold while the stamp reads out
       ]);
       return;
     }
@@ -123,12 +124,12 @@ var Demo = (() => {
           { delay: 0.3, fn: () => UI.openEvidenceSheet(untied.id) },
           { delay: 0.4, fn: () => scrollSheet(1.6) },
           { delay: 1.9, fn: () => lit(UI.getEl(key)) },
-          { delay: D.PRESS_S + 0.4, fn: () => {
+          { delay: 1.1, fn: () => {        // linger on the chosen car, then press
             const el = UI.getEl(key);
             if (pressable(el)) pressFx(el); else UI.closeEvidenceSheet();
             unlight();
           } },
-          { delay: 1.3, fn: () => UI.closeEvidenceSheet() }
+          { delay: 2.0, fn: () => UI.closeEvidenceSheet() }  // stamp reads out, tied file peeks, move on
         ]);
         return;
       }
