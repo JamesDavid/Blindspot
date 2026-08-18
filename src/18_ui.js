@@ -631,6 +631,12 @@ var UI = (() => {
       if (legible) {
         g.fillStyle = '#14161c';
         g.fillText(plate[i], chx, chy + 1);
+      } else if (read.conf >= CONFIG.Cases.DMV_CHECK_CONF && plate[i] !== '-') {
+        // the registry fills the gap: an inferred character, marked blue
+        g.fillStyle = '#b8d4e8';
+        g.fillRect(chx - step * 0.38, py + ph * 0.18, step * 0.76, ph * 0.64);
+        g.fillStyle = '#2a6a9a';
+        g.fillText(plate[i], chx, chy + 1);
       } else {
         g.fillStyle = 'rgba(20,22,28,0.5)';   // the smudge: something was there
         g.fillText(plate[i], chx + (rng() - 0.5) * 3, chy + 1);
@@ -688,6 +694,24 @@ var UI = (() => {
   }
 
   const HEADINGS = ['→ EAST', '↓ SOUTH', '← WEST', '↑ NORTH'];
+
+  // The registry run (player-directed): every frame clear enough gets its
+  // plate checked against the DMV record. A mismatch between what the
+  // plate REGISTERS to and what is IN the frame exposes a swapped plate
+  // or a bad read — the informed reason to pull a frame. Murky frames
+  // can't be checked, so the deepest lies still hide.
+  function dmvLine(read) {
+    if (read.conf < CONFIG.Cases.DMV_CHECK_CONF || !read.plate || read.vehId === null) return '';
+    const reg = carIdentity(read.plate);
+    if (read.plate === read.actualPlate) {
+      return `<br><span style="color:#6aa87a">DMV: plate registers to a ${reg.color.name} ${reg.type}${reg.damage.length ? ', ' + reg.damage[0].toLowerCase() : ''} — matches this vehicle</span>`;
+    }
+    const seen = carIdentity(read.actualPlate);
+    if (reg.color.name !== seen.color.name || reg.type !== seen.type) {
+      return `<br><span style="color:#ff8a80;font-weight:700">DMV MISMATCH — ${read.plate} registers to a ${reg.color.name} ${reg.type}. That is not this car. Swapped plate, or a bad read.</span>`;
+    }
+    return '';   // coincidental twin: the registry genuinely can't tell
+  }
 
   // Every read the file ever held — the sheet shows the WHOLE story,
   // including footage that aged off, died with its pole, or is still
@@ -931,7 +955,7 @@ var UI = (() => {
     const against = conflicts.filter(p => p.includes(read.id));
     if (against.length) bits.push('<span class="warn">⚠ CANNOT BE ONE CAR WITH ' +
       against.map(p => '#' + idxOf[p[0] === read.id ? p[1] : p[0]]).join(', ') + '</span>');
-    return bits.join(' · ');
+    return bits.join(' · ') + dmvLine(read);
   }
 
   let evsheetCaseId = null;
@@ -1017,9 +1041,11 @@ var UI = (() => {
           drawStill(cv, bestR);
           cell.appendChild(cv);
           const meta = h('div', 'evmeta');
+          const regC = carIdentity(p);
           meta.innerHTML = `<b style="color:${LCOLORS[pi] || '#8b93a5'}">CANDIDATE ${LETTERS[pi] || '?'}</b> · ${frames.length} frame${frames.length === 1 ? '' : 's'} · BEST CONF ${bestR.conf}<br>` +
             `seen <b>${isFinite(st2.dist) ? st2.dist + ' block' + (st2.dist === 1 ? '' : 's') : '?'}</b> from the scene, <b>${isFinite(st2.dt) ? Math.round(st2.dt) + 's' : '?'}</b> after` +
-            (atScene ? ' · <span style="color:#7ad9a0;font-weight:700">AT THE SCENE WHEN IT HAPPENED</span>' : '');
+            (atScene ? ' · <span style="color:#7ad9a0;font-weight:700">AT THE SCENE WHEN IT HAPPENED</span>' : '') +
+            `<br><span style="color:#6a8a9a">DMV: registers to a ${regC.color.name} ${regC.type}${regC.damage.length ? ', ' + regC.damage[0].toLowerCase() : ''}${descriptionMatches(kase.witnessDesc, regC) ? ' — fits the witness' : ' — does NOT fit the witness'}</span>`;
           cell.appendChild(meta);
           const btn = h('button', 'release', 'TIE FILE TO THIS CAR');
           btn.style.cssText = 'width:100%;margin-top:4px;padding:8px 0;border:none;border-radius:7px;font-weight:800;font-size:10.5px;background:#31504f;color:#d2f2ef;';
@@ -1161,7 +1187,8 @@ var UI = (() => {
       sheet.appendChild(h('div', 'evhint',
         'Two ways to make the arrest: a CLEAN frame (conf ' + CONFIG.Confidence.CLARITY +
         '+) at the scene within the crime window — or a chain of ' + CONFIG.Cases.READS_TO_CLOSE +
-        ' reads from ' + CONFIG.Cases.MIN_TRACK_CAMS + '+ cameras summing ' + SB + '. ' + chainTxt));
+        ' reads from ' + CONFIG.Cases.MIN_TRACK_CAMS + '+ cameras summing ' + SB + '. ' + chainTxt +
+        ' The registry runs on every clear frame — blue plate characters are DMV-inferred, and a DMV MISMATCH is your cue to pull the frame.'));
       const closer = h('div', 'evverdict');
       const kb = h('button', 'release', 'BACK TO THE STREETS');
       kb.setAttribute('data-key', 'ev-keep');

@@ -48,6 +48,7 @@ var CONFIG = Object.freeze({
     CLOSURE_CONFIDENCE_SUM: 210,    // spec-authored; re-swept post-scene-ID: lowering it only bred wrongful convictions — the scene ID is the accessible path, the chain is the strong one
     SCENE_ID_DIST: 2,               // player-directed ("just one near the scene at the time of the crime"): a CLEAN frame this close to the scene…
     SCENE_ID_WINDOW: 14,            // …within this many seconds of the crime, of a car matching the witness, closes the case by itself — made at the scene
+    DMV_CHECK_CONF: 55,             // player-directed: frames at least this clear get run against the registry — mismatched plate-vs-car exposes swapped plates and bad reads, and the registry completes partial plates. Murkier frames can't be checked; the lie survives at the low end.
     LIFETIME_SECONDS: 90,           // re-swept (test/opt_lifetime.js) after quadrant cameras: 90x3 (51.0) now clearly beats 75x3 (41.2) — narrower sectors need longer files; the optimum moved with the mechanics again
     CONTESTED_BAND: 12,             // judgment-tuned: width of the near-bar band that surfaces a card
     CONTESTED_PER_SHIFT_MIN: 2,     // spec-authored: enough to matter
