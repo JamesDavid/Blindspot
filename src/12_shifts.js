@@ -107,6 +107,17 @@ var ShiftSystem = (() => {
       if (!state.crews['vandals-' + sh.num]) State.addCrew(state, 'vandals-' + sh.num, 'VANDAL');
     }
 
+    // High trust: the tip line rings EARLY — spawn zones flagged at the
+    // telegraph, before any car moves (§15.3, player-directed shape)
+    if (state.trust >= CONFIG.Economy.HIGH_TRUST_AT) {
+      for (const c of sh.pendingCrimes) {
+        // reveal the zone, not the exact schedule
+        State.emit(state, { type: 'tip', node: c.type === 'SYNDICATE' ? state.map.syndicate
+          : state.map.spawnZones[0], early: true });
+      }
+      State.log(state, 'The tip line is warm. Zones flagged ahead of the shift.', 'first-early-tip');
+    }
+
     // Rain: enters at shift 6 and recurs (§14.3)
     if (sh.num >= 6 && (sh.num - 6) % CONFIG.Shifts.RAIN_RECUR_EVERY === 0) {
       sh.rainUntil = state.time + CONFIG.Shifts.RAIN_DURATION;

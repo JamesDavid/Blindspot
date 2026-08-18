@@ -30,7 +30,7 @@ function controller(state) {
 for (const seed of ['coh-a', 'coh-b', 'coh-c']) {
   const state = State.newMatch(seed);
   Sim.run(state, 60 * 12, controller);
-  const closed = state.cases.filter(c => c.status === 'CLOSED');
+  const closed = state.cases.filter(c => (c.status === 'CLOSED' || c.status === 'ARREST') && c.closedTriple);
   const autoClosed = closed.filter(c => c.via === 'auto');
   let incoherent = 0, unreconstructible = 0;
   for (const kase of closed) {
@@ -94,7 +94,7 @@ for (const seed of ['coh-a', 'coh-b', 'coh-c']) {
   mk2(ra.cam, 20); mk2(ra.cam, 24); mk2(ra.cam, 28); // same pole, sequential: coherent
   state.time = 30;
   CaseSystem.tick(state, 0.1);
-  check('unit: coherent evidence closes', kase2.status === 'CLOSED', kase2.status);
+  check('unit: coherent evidence corroborates (arrest made)', kase2.status === 'ARREST', kase2.status);
 }
 
 if (fails) { console.error(`test_coherence: ${fails} FAILURE(S)`); process.exit(1); }

@@ -11,7 +11,7 @@ var CONFIG = Object.freeze({
 
   Grid: {
     W: 9, H: 16,                    // spec-authored: portrait lattice; one knob, everything derives from area
-    SEGMENT_SECONDS: 1.6,           // player-directed: 1.0 made vehicles blur past cameras; reads need a readable beat
+    SEGMENT_SECONDS: 1.25,          // player-directed: "slow and boring to watch" — quickened twice from 1.6; reads still land legibly
     ARTERIAL_SPEED_MULT: 1.6        // spec-authored
   },
 
@@ -41,6 +41,7 @@ var CONFIG = Object.freeze({
     CONTESTED_BAND: 12,             // judgment-tuned: width of the near-bar band that surfaces a card
     CONTESTED_PER_SHIFT_MIN: 2,     // spec-authored: enough to matter
     CONTESTED_PER_SHIFT_MAX: 4,     // spec-authored: few enough to stay a judgement call
+    CONVICTION_DELAY: 8.0,          // player-directed pipeline: corroborate -> ARREST -> trial; evidence must survive to conviction, so retention presses past the arrest
     STARVATION_GRACE: 12.0,         // spec-authored (§10.4): expiring evidence glows this early
     COHERENCE_SLACK_SEGS: 1.5,      // judgment-tuned: grace segments in the one-vehicle route check — tighter falsely contradicts same-pole reads
     FALSE_MAJORITY: 2               // judgment-tuned: closing triple with >= this many false reads charges the wrong plate ("two of three were someone else" is legible)
@@ -89,13 +90,14 @@ var CONFIG = Object.freeze({
   },
 
   Traffic: {
-    AMBIENT_PER_30_NODES: 2.5,      // judgment-tuned: ambient vehicles scale with map area; ~12 concurrent on the 9x16
-    AMBIENT_MAX: 14,                // judgment-tuned: legibility cap — more than this reads as static
-    SPAWN_INTERVAL: 2.5             // judgment-tuned: ambient respawn cadence
+    AMBIENT_PER_30_NODES: 3.4,      // player-directed: raised for street life after "lacking action"
+    AMBIENT_MAX: 18,                // player-directed with the density raise; still short of reading as static
+    SPAWN_INTERVAL: 1.1,            // player-directed: streets refill fast
+    PREFILL: true                   // player-directed: full ambient population from the first frame, no slow trickle-in
   },
 
   Economy: {
-    START_BUDGET: 120,              // swept (test/opt_start.js): 120 optimal; richer starts plateau LOWER (180 scores ~47, 260 ~39) — the same shape the previous prototype found
+    START_BUDGET: 200,              // player-directed ("way too low" at 120), then CONFIRMED by re-sweep: after the pacing raise the grid inverted — richer starts now score higher (the denser city needs eyes sooner). The optimum moved with the mechanics, as it always does.
     PAYOUT_PETTY: 25, PAYOUT_MAJOR: 60, PAYOUT_SYNDICATE: 90, // spec-authored, scaled by severity
     CLEARANCE_START: 70,            // spec-authored
     CLEARANCE_FLOOR: 35,            // spec-authored: fall below and you are relieved
@@ -107,7 +109,8 @@ var CONFIG = Object.freeze({
     TRUST_GAIN_CLEAN_SHIFT: 1,      // judgment-tuned: slow recovery on clean shifts (§15.3 "rises slowly")
     HIGH_TRUST_AT: 65,              // judgment-tuned: citizen tips arrive above this (§15.3)
     LOW_TRUST_AT: 45,               // spec-authored
-    LOW_TRUST_PAYOUT_MULT: 0.7      // spec-authored
+    LOW_TRUST_PAYOUT_MULT: 0.7,     // spec-authored
+    COLLAPSE_PAYOUT_MULT: 0.5       // player-directed pipeline: a case that collapses in court still pays the arrest half
   },
 
   Warrant: {
@@ -117,8 +120,8 @@ var CONFIG = Object.freeze({
   },
 
   Shifts: {
-    FIRST_AT: 45.0, TELEGRAPH: 6.0, // spec-authored
-    INTERVAL_EARLY: 55.0, INTERVAL_MID: 45.0, INTERVAL_LATE: 35.0, // spec-authored: compressing the interval is free difficulty
+    FIRST_AT: 18.0, TELEGRAPH: 6.0, // player-directed: the city must be busy from the first breath; tutorial still holds the clock for new players
+    INTERVAL_EARLY: 40.0, INTERVAL_MID: 34.0, INTERVAL_LATE: 28.0, // player-directed: compressed twice from 55/45/35 after "slow, lacking action"
     COUNT: 9,                       // spec-authored
     OVERTIME_INTERVAL: 30.0,        // census-run (test/opt_overtime.js): 0 timeouts in every swept cell; 24-40s flat; keep 30
     OVERTIME_STEP: 0.15,            // census-run (test/opt_overtime.js): 0.08-0.25 all end every match with a verdict mix; keep 0.15
@@ -133,13 +136,13 @@ var CONFIG = Object.freeze({
   // Authored per-shift composition (§14). Counts are per shift; vandal
   // budget is how many vandals the shift may spawn in total.
   ShiftTable: [                     // spec-authored, index = shift-1
-    { petty: 2, major: 0, synd: 0, vandalBudget: 0, scrapper: 0, tagger: 0, fixer: 0 }, // 1: reads, cases, closure
-    { petty: 3, major: 0, synd: 0, vandalBudget: 0, scrapper: 0, tagger: 0, fixer: 0 }, // 2: one camera is not enough
-    { petty: 2, major: 1, synd: 0, vandalBudget: 1, scrapper: 1, tagger: 0, fixer: 0 }, // 3: first scrapper
-    { petty: 2, major: 1, synd: 1, vandalBudget: 1, scrapper: 0, tagger: 1, fixer: 0 }, // 4: first contested case; syndicate case for shift 5
+    { petty: 3, major: 0, synd: 0, vandalBudget: 0, scrapper: 0, tagger: 0, fixer: 0 }, // 1: reads, cases, closure (player-directed: +1 for opening action)
+    { petty: 3, major: 1, synd: 0, vandalBudget: 0, scrapper: 0, tagger: 0, fixer: 0 }, // 2: one camera is not enough (player-directed: first major moved up)
+    { petty: 3, major: 1, synd: 0, vandalBudget: 2, scrapper: 1, tagger: 1, fixer: 0 }, // 3: first scrapper (player-directed: +1 petty, +1 tagger)
+    { petty: 3, major: 1, synd: 1, vandalBudget: 1, scrapper: 0, tagger: 1, fixer: 0 }, // 4: first contested case; syndicate case for shift 5 (player-directed: +1 petty)
     { petty: 2, major: 1, synd: 1, vandalBudget: 1, scrapper: 0, tagger: 0, fixer: 1 }, // 5: THE FIXER STRIKE (scripted, §14.4)
     { petty: 2, major: 2, synd: 1, vandalBudget: 2, scrapper: 1, tagger: 1, fixer: 0 }, // 6: rain
-    { petty: 3, major: 2, synd: 1, vandalBudget: 2, scrapper: 1, tagger: 1, fixer: 0 }, // 7: crews visibly reroute
+    { petty: 4, major: 2, synd: 1, vandalBudget: 2, scrapper: 1, tagger: 1, fixer: 0 }, // 7: crews visibly reroute (player-directed: +1 petty)
     { petty: 4, major: 2, synd: 2, vandalBudget: 3, scrapper: 1, tagger: 1, fixer: 1 }, // 8: surge
     { petty: 3, major: 3, synd: 3, vandalBudget: 3, scrapper: 1, tagger: 1, fixer: 1 }  // 9: the syndicate's largest job
   ],

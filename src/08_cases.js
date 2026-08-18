@@ -122,12 +122,11 @@ var CaseSystem = (() => {
     const veh = Traffic.spawnVehicle(state, 'SUSPECT', spawnNode, exit, crewId, kase.id, kase.plate);
 
     State.emit(state, { type: 'crime', crimeType: type, node: spawnNode, caseId: kase.id });
-    // High trust: citizen tips reveal the start early (§15.3)
-    if (state.trust >= CONFIG.Economy.HIGH_TRUST_AT) {
-      state.stats.tips++;
-      State.emit(state, { type: 'tip', node: spawnNode, caseId: kase.id });
-      State.log(state, 'Tip line: trouble near intersection ' + spawnNode + '.', 'first-tip');
-    }
+    // every reported crime rings the tip line (player-directed); high
+    // trust gets the tip EARLY, at the telegraph, before the car moves
+    state.stats.tips++;
+    State.emit(state, { type: 'tip', node: spawnNode, caseId: kase.id, early: false });
+    State.log(state, 'Tip line: ' + type.toLowerCase() + ' reported near intersection ' + spawnNode + '.', 'first-tip');
     return kase;
   }
 
@@ -183,43 +182,73 @@ var CaseSystem = (() => {
     return pay;
   }
 
+  // The pipeline (player-directed): corroborate → ARREST → conviction.
+  // Corroboration makes the arrest; the file must then survive to trial —
+  // evidence that ages off the drives before conviction collapses in court.
   function close(state, kase, triple, via) {
-    const E = CONFIG.Economy;
-    kase.status = 'CLOSED';
+    kase.status = 'ARREST';
     kase.via = via || 'auto';
     kase.closedAt = state.time;
+    kase.convictAt = state.time + CONFIG.Cases.CONVICTION_DELAY;
     kase.closedTriple = (triple || []).map(r => r.id);
     const falseCount = (triple || []).filter(r => !r.trueMatch).length;
     kase.falseCharge = falseCount >= CONFIG.Cases.FALSE_MAJORITY;
-    state.clrClosed += 1;
-    state.budget += payout(state, kase);   // closures pay whether or not the charge was correct (§15.1)
+    state.clrClosed += 1;                  // the arrest is what clearance counts
     state.stats.closures++;
+    State.emit(state, { type: 'arrest', caseId: kase.id, via: kase.via });
+    State.log(state, 'Corroborated. Arrest made — ' + kase.plate + '.', 'first-arrest');
+
+    // an arrest takes the vandal crew off the board immediately
+    if (kase.type === 'VANDAL') {
+      const crew = state.crews[kase.crewId];
+      if (crew) {
+        crew.caught = true;
+        for (const v of state.vandals) if (v.crewId === crew.id) v.state = 'CAUGHT';
+      }
+    }
+  }
+
+  function resolveConviction(state, kase) {
+    const E = CONFIG.Economy;
+    kase.status = 'CLOSED';
+    const triple = (kase.closedTriple || []).map(id => state.reads[id - 1]).filter(Boolean);
+    // the file must still stand up: enough of the closing reads unexpired
+    const alive = triple.filter(r => !r.lost && r.expiresAt !== undefined && state.time < r.expiresAt).length;
+    kase.collapsed = alive < CONFIG.Cases.READS_TO_CLOSE - 1;
 
     if (kase.falseCharge) {
+      // the trap (§7.1): the wrongful conviction still pays
+      state.budget += payout(state, kase);
       state.trust = Math.max(0, state.trust - E.TRUST_LOSS_FALSE_CHARGE);
       state.stats.falseCharges++;
       state.falseChargesThisShift++;
-      const wrong = (triple || []).find(r => !r.trueMatch);
+      const wrong = triple.find(r => !r.trueMatch);
       State.emit(state, { type: 'falseCharge', caseId: kase.id, actualPlate: wrong ? wrong.actualPlate : '?' });
-      State.log(state, 'Wrong plate charged. The crew is still out there.', 'first-false-charge');
-      State.log(state, 'Charged ' + kase.plate + ' — the reads were of ' + (wrong ? wrong.actualPlate : 'another car') + '.', null);
-    } else {
-      State.emit(state, { type: 'caseClosed', caseId: kase.id, via: via || 'auto' });
-      if (kase.type === 'SYNDICATE') {
-        state.warrant = Math.min(CONFIG.Warrant.REQUIRED, state.warrant + CONFIG.Warrant.PER_CASE);
-        State.emit(state, { type: 'warrant', value: state.warrant });
-        State.log(state, 'Syndicate case closed. Warrant at ' + Math.round(state.warrant) + '%.', null);
-      }
-      if (kase.type === 'VANDAL') {
-        const crew = state.crews[kase.crewId];
-        if (crew) {
-          const bounty = Math.round(crew.damage * CONFIG.Vandals.CREW_CASE_BOUNTY_MULT);
-          state.budget += bounty;
-          state.stats.bounties++;
-          crew.caught = true;
-          for (const v of state.vandals) if (v.crewId === crew.id) v.state = 'CAUGHT';
-          State.log(state, 'Vandal crew identified and picked up. Recovered ' + bounty + '.', null);
-        }
+      State.log(state, 'Wrong plate convicted. The crew is still out there.', 'first-false-charge');
+      State.log(state, 'Convicted ' + kase.plate + ' — the reads were of ' + (wrong ? wrong.actualPlate : 'another car') + '.', null);
+      return;
+    }
+    if (kase.collapsed) {
+      state.budget += payout(state, kase) * E.COLLAPSE_PAYOUT_MULT;
+      State.emit(state, { type: 'caseCollapsed', caseId: kase.id });
+      State.log(state, 'The footage aged out before trial. Case collapsed in court.', 'first-collapse');
+      return;
+    }
+    state.budget += payout(state, kase);
+    State.emit(state, { type: 'caseClosed', caseId: kase.id, via: kase.via });
+    State.log(state, 'Conviction — ' + kase.plate + '.', 'first-conviction');
+    if (kase.type === 'SYNDICATE') {
+      state.warrant = Math.min(CONFIG.Warrant.REQUIRED, state.warrant + CONFIG.Warrant.PER_CASE);
+      State.emit(state, { type: 'warrant', value: state.warrant });
+      State.log(state, 'Syndicate conviction. Warrant at ' + Math.round(state.warrant) + '%.', null);
+    }
+    if (kase.type === 'VANDAL') {
+      const crew = state.crews[kase.crewId];
+      if (crew) {
+        const bounty = Math.round(crew.damage * CONFIG.Vandals.CREW_CASE_BOUNTY_MULT);
+        state.budget += bounty;
+        state.stats.bounties++;
+        State.log(state, 'Vandal crew convicted. Recovered ' + bounty + '.', null);
       }
     }
   }
@@ -270,6 +299,7 @@ var CaseSystem = (() => {
 
   function tick(state, dt) {
     for (const kase of state.cases) {
+      if (kase.status === 'ARREST' && state.time >= kase.convictAt) resolveConviction(state, kase);
       if (kase.status !== 'OPEN' && kase.status !== 'CONTESTED') continue;
       const ev = usableEvidence(state, kase);
 

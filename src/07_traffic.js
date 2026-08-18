@@ -126,6 +126,20 @@ var Traffic = (() => {
   }
 
   function tick(state, dt) {
+    // full streets from the first frame (player-directed)
+    if (CONFIG.Traffic.PREFILL && !state._prefilled) {
+      state._prefilled = true;
+      const want = ambientTarget(state);
+      for (let i = 0; i < want; i++) {
+        const trip = pickAmbientTrip(state);
+        if (trip) {
+          const veh = spawnVehicle(state, 'AMBIENT', trip.from, trip.to, null, null,
+            makePlate(() => State.rngNext(state, 'plates')));
+          // scatter them along their routes so the city starts mid-motion
+          if (veh) veh.at = Math.floor(State.rngNext(state, 'traffic') * Math.max(1, veh.path.length - 2));
+        }
+      }
+    }
     // keep ambient population up
     const ambient = state.vehicles.filter(v => v.kind === 'AMBIENT' && !v.done).length;
     if (ambient < ambientTarget(state)) {

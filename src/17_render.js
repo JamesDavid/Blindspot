@@ -330,11 +330,16 @@ var Renderer = (() => {
 
   // ---------- vehicles & vandals ----------
 
+  // muted night-street car palette — variety without stealing a signal color
+  const CAR_COLORS = [0x9aa0ab, 0x7d8794, 0xa89078, 0x8a6f6a, 0x6f7f8f,
+    0x7a8a72, 0xb0a898, 0x5f6673, 0x94847f, 0x86929e, 0xa39a6f, 0x6d7a85];
+
   function buildVehicle(veh) {
     const g = new THREE.Group();
-    const tint = 0.75 + (hashStr(veh.plate) % 40) / 100;
+    const col = CAR_COLORS[hashStr(veh.plate) % CAR_COLORS.length];
+    const tint = 0.8 + (hashStr(veh.plate + 'x') % 30) / 100;
     const body = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.06, 0.09),
-      new THREE.MeshLambertMaterial({ color: new THREE.Color(V.VEHICLE).multiplyScalar(tint) }));
+      new THREE.MeshLambertMaterial({ color: new THREE.Color(col).multiplyScalar(tint) }));
     body.position.y = 0.045;
     g.add(body);
     const cone = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.3, 8, 1, true),
@@ -548,7 +553,12 @@ var Renderer = (() => {
           break;
         }
         case 'crime': crimeIcon(state, ev.node, V.RED, 6); break;
-        case 'tip': crimeIcon(state, ev.node, V.CYAN, 4); break;
+        case 'tip': if (ev.early) crimeIcon(state, ev.node, V.CYAN, 5); break;
+        case 'arrest': {
+          const kase = state.cases.find(c => c.id === ev.caseId);
+          if (kase) ringFx(state, kase.spawnNode, V.TEAL, 1.6, 0.15, 0.8);
+          break;
+        }
         case 'destroyed': dataLostFx(state, ev.node); markOverlayDirty(); break;
         case 'dataLost': break;
         case 'tagged': markOverlayDirty(); break;

@@ -277,8 +277,8 @@ var UI = (() => {
 
   function syncCards() {
     const show = state.cases.filter(c =>
-      c.status === 'OPEN' || c.status === 'CONTESTED' ||
-      (c.closedAt !== undefined && state.time - c.closedAt < 2.5) ||
+      c.status === 'OPEN' || c.status === 'CONTESTED' || c.status === 'ARREST' ||
+      (c.status === 'CLOSED' && c.convictAt !== undefined && state.time - c.convictAt < 2.5) ||
       (c.status === 'COLD' && c._coldShownUntil === undefined));
     // order: contested first, then by expiry
     show.sort((a, b) =>
@@ -298,7 +298,7 @@ var UI = (() => {
       const frac = clamp((kase.coldAt - state.time) / CONFIG.Cases.LIFETIME_SECONDS, 0, 1);
       el.className = 'card' + (kase.status === 'CONTESTED' ? ' contested' : '') +
         (kase.type === 'VANDAL' ? ' vandal' : '') +
-        (kase.status === 'CLOSED' ? ' closing' : '') +
+        (kase.status === 'CLOSED' && state.time - kase.convictAt > 1.5 ? ' closing' : '') +
         (kase.status === 'COLD' ? ' cold' : '');
       if (kase.status === 'CONTESTED') {
         const c = kase.contested || {};
@@ -318,9 +318,19 @@ var UI = (() => {
         el.querySelector('.release').onclick = (e) => {
           e.stopPropagation(); Actions.adjudicate(state, kase.id, 'RELEASE'); GameAudio.unlock();
         };
-      } else {
+      } else if (kase.status === 'ARREST') {
+        const trial = Math.max(0, Math.ceil(kase.convictAt - state.time));
         el.innerHTML = `
-          <div class="typ">${kase.type === 'VANDAL' ? 'VANDAL CREW' : kase.type}${kase.status === 'CLOSED' ? ' · CLOSED' : kase.status === 'COLD' ? ' · COLD' : ''}</div>
+          <div class="typ">ARREST · TRIAL ${trial}s</div>
+          <div class="plate">${kase.plate}</div>
+          <div class="pips">${pips}</div>
+          <div class="timer"><i style="width:100%;background:#53c8ff"></i></div>`;
+      } else {
+        const tail = kase.status === 'CLOSED'
+          ? (kase.falseCharge ? ' · WRONG PLATE' : kase.collapsed ? ' · COLLAPSED' : ' · CONVICTED')
+          : kase.status === 'COLD' ? ' · COLD' : '';
+        el.innerHTML = `
+          <div class="typ">${kase.type === 'VANDAL' ? 'VANDAL CREW' : kase.type}${tail}</div>
           <div class="plate">${kase.plate}</div>
           <div class="pips">${pips}</div>
           <div class="timer"><i style="width:${frac * 100}%"></i></div>`;

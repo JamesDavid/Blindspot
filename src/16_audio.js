@@ -89,6 +89,8 @@ var GameAudio = (() => {
       switch (ev.type) {
         case 'read': ev.qualifying ? S.read() : S.readMiss(); break;
         case 'placed': S.place(); break;
+        case 'arrest': S.contested(); break;
+        case 'caseCollapsed': S.cold(); break;
         case 'caseClosed': S.close(); break;
         case 'caseCold': S.cold(); break;
         case 'falseCharge': S.falseCharge(); break;
