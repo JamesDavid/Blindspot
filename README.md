@@ -10,6 +10,16 @@ A portrait mobile web prototype for the Meta Horizon Creator Competition (Tower 
 
 ---
 
+## Watch the network close the warrant
+
+Six minutes of night work at timelapse: the **evolved champion** drives the real interface — menus open at its thumb, the button it means to press lights gold, ghosts walk CONFIRM — building nine cameras, weighing contested cards, dropping the bar when the rain comes, and serving the syndicate warrant on camera:
+
+**▶ [Watch the full shift (mp4)](docs/media/shift_timelapse.mp4)**
+
+<img src="docs/media/shift_teaser.gif" width="220">
+
+---
+
 ## Playing
 
 Open the link above (or `index.html` from disk — no server or network needed) on a portrait phone or a narrow browser window.

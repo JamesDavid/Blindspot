@@ -48,7 +48,7 @@ function check(name, ok, detail) {
   await page.waitForTimeout(250);
   await page.click('[data-key=confirm]');
   await page.evaluate(() => { window.__warp = 30; });
-  await page.waitForTimeout(11000);  // ≈ a simulated minute at saturated warp
+  await page.waitForFunction(() => window.__game.state.time >= 60, { timeout: 40000 });
   const st = await page.evaluate(() => ({
     t: window.__game.state.time, cams: window.__game.state.cameras.length,
     reads: window.__game.state.stats.reads, stamp: window.BUILDSTAMP
@@ -67,8 +67,9 @@ function check(name, ok, detail) {
   const priorNames = /windward|grand theft|gta\b|watch.?dogs|simcity|cities.?skylines/i;
   // tool/brand names: allowed ONLY in the build log (it must document tools)
   const toolNames = /claude|anthropic|copilot|chatgpt|openai/i;
-  // sponsor name: allowed only in the build log / README competition line
-  const sponsor = /\bmeta\b|facebook/i;
+  // sponsor name: allowed only in the build log / README competition line.
+  // Capitalised match only — lowercase `<meta>` is an HTML tag, not a brand.
+  const sponsor = /\bMeta\b|facebook/;
 
   function scanFile(p, rules) {
     const text = fs.readFileSync(p, 'utf8');
