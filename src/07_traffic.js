@@ -85,9 +85,11 @@ var Traffic = (() => {
       const entry = cam.sight.find(e => e.seg === segId);
       if (!entry) continue;
       const conf = Sightlines.liveConfidence(state, cam, entry);
+      const a = state.map.nodes[veh.path[veh.at - 1]], b = state.map.nodes[veh.path[veh.at]];
+      const heading = a && b ? (b.x > a.x ? 0 : b.y > a.y ? 1 : b.x < a.x ? 2 : 3) : 0; // E S W N
       const read = {
         id: state.nextReadId++, t: state.time, segId, vehId: veh.id,
-        crewId: veh.crewId,
+        crewId: veh.crewId, heading,
         actualPlate: veh.plate, plate: veh.plate,
         trueMatch: false, conf, qualifying: conf >= state.threshold,
         caseId: null

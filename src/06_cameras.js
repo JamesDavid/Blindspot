@@ -96,6 +96,9 @@ var CameraSystem = (() => {
   function record(state, cam, read) {
     read.camId = cam.id;
     read.camNode = cam.node;   // where the picture was taken — survives the camera
+    read.camType = cam.type;
+    read.camTags = cam.tags;   // a fouled lens smears the still it took
+    read.rain = state.shift.rainUntil > state.time;  // rain streaks the frame
     read.uploadedAt = null;
     read.lost = false;
     state.reads.push(read);

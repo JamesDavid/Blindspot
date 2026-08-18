@@ -107,6 +107,28 @@ var UI = (() => {
   bottom:calc(14px + env(safe-area-inset-bottom)); background:#12151df0; border:1px solid #2b3040;
   border-radius:10px; padding:7px 14px; font-size:11px; letter-spacing:0.03em; max-width:86vw;
   text-align:center; opacity:0; transition:opacity 0.25s; pointer-events:none; white-space:nowrap; }
+.evsheet { position:absolute; left:50%; transform:translateX(-50%); bottom:0; width:min(400px,100vw);
+  max-height:74vh; overflow-y:auto; background:#0e1118fa; border:1px solid #2b3040; border-bottom:none;
+  border-radius:14px 14px 0 0; z-index:44; padding:10px 10px calc(10px + env(safe-area-inset-bottom));
+  box-shadow:0 -8px 30px #000c; -webkit-overflow-scrolling:touch; }
+.evhead { display:flex; align-items:baseline; gap:8px; margin-bottom:8px; }
+.evhead b { font-size:13px; letter-spacing:0.05em; color:#ffc84a; font-family:monospace; }
+.evhead span { font-size:9.5px; color:#8b93a5; flex:1; }
+.evhead button { background:#232837; border:1px solid #343b4e; color:#aab2c0; border-radius:7px;
+  padding:4px 10px; font-size:12px; font-weight:700; }
+.evref { margin-bottom:8px; }
+.evref canvas, .evcell canvas { display:block; width:100%; border-radius:8px; background:#000; }
+.evmeta { font-size:8.5px; color:#8b93a5; margin-top:2px; letter-spacing:0.04em; line-height:1.35; }
+.evmeta .warn { color:#ff8a80; font-weight:700; }
+.evmeta .ref { color:#39d3c0; font-weight:700; }
+.evgrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
+.evcell { border-radius:8px; }
+.evhint { font-size:9.5px; color:#8b93a5; text-align:center; margin:2px 0 8px; line-height:1.5; }
+.evverdict { display:flex; gap:8px; }
+.evverdict button { flex:1; padding:11px 0; border:none; border-radius:9px; font-size:13px;
+  font-weight:800; letter-spacing:0.06em; }
+.evverdict .charge { background:#6e3b36; color:#ffd9d5; }
+.evverdict .release { background:#31504f; color:#d2f2ef; }
 .overlay { position:absolute; inset:0; background:#05060af0; display:flex; flex-direction:column;
   align-items:center; justify-content:center; z-index:50; text-align:center; padding:20px; }
 .overlaid .hud, .overlaid .caserail, .overlaid .ticker, .overlaid .identity { display:none; }
@@ -188,7 +210,7 @@ var UI = (() => {
     ghostMode = null; menuNode = null; relocPick = null;
     cardEls.clear();
     els.caserail.innerHTML = '';
-    closeMenu(); hideConfirm();
+    closeMenu(); hideConfirm(); closeEvidenceSheet();
     els.dial.value = s.threshold;
     els.hud.querySelector('[data-key=seedtag]').textContent = 'seed ' + s.seed;
   }
@@ -232,6 +254,15 @@ var UI = (() => {
 
     syncCards();
 
+    // an open case file follows its case: resolved or expired → it closes
+    if (evsheetCaseId !== null) {
+      const kase = CaseSystem.byId(state, evsheetCaseId);
+      if (!kase || kase.status !== 'CONTESTED') {
+        closeEvidenceSheet();
+        if (kase && kase.status === 'COLD') identity('The file expired unanswered — released.');
+      }
+    }
+
     for (const ev of evs) {
       if (ev.type === 'verdict') showVerdict(ev.verdict);
       if (ev.type === 'crime' || ev.type === 'caseAtRisk') {
@@ -259,6 +290,10 @@ var UI = (() => {
       el.setAttribute('data-key', 'case-' + kase.id);
       el.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (kase.status === 'CONTESTED') {   // the card opens the case file
+          openEvidenceSheet(kase.id);
+          return;
+        }
         Renderer.centerOn(kase.spawnNode);
         identity(caseIdentity(kase));
       });
@@ -345,6 +380,219 @@ var UI = (() => {
         cardEls.delete(id);
       }
     }
+  }
+
+  // ---------- the case file: stills you can actually read ----------
+  // Every read renders as a synthetic camera frame: the car that was
+  // GENUINELY photographed (its real colour), the plate as the OCR took
+  // it (characters smudged by confidence), rain, lens grime, grain. The
+  // player compares frames against the best one — a mismatched car or an
+  // unreadable plate is the informed reason to RELEASE. Confidence is
+  // image quality made visible; certainty is never given away.
+
+  function drawStill(canvas, read) {
+    const g = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    const rng = mulberry32(hashStr('still:' + read.id));
+    const q = clamp((read.conf - 20) / 70, 0.08, 1);   // confidence IS image quality
+
+    // night ground
+    g.fillStyle = '#07090d'; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#191c22'; g.fillRect(0, H * 0.42, W, H * 0.58);
+    g.fillStyle = '#22262e'; g.fillRect(0, H * 0.52, W, H * 0.48);
+    // lane dashes
+    g.fillStyle = 'rgba(120,126,140,0.35)';
+    for (let x = W * 0.05; x < W; x += W * 0.16) g.fillRect(x, H * 0.72, W * 0.07, H * 0.015);
+    // sodium pool
+    const gx = W * (0.25 + rng() * 0.5);
+    const grad = g.createRadialGradient(gx, H * 0.3, 4, gx, H * 0.3, W * 0.45);
+    grad.addColorStop(0, 'rgba(255,154,42,0.30)'); grad.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grad; g.fillRect(0, 0, W, H);
+
+    const flip = read.heading === 2;   // westbound cars face the other way
+    const cx = W * (0.34 + rng() * 0.18), cy = H * 0.52;
+    const cw = W * 0.44, ch = H * 0.20;
+
+    if (read.vehId === null) {
+      // a witness frame: a hooded figure at the pole, not a car
+      g.fillStyle = '#2a2e38';
+      g.fillRect(cx + cw * 0.4, cy - ch * 1.1, cw * 0.16, ch * 1.5);
+      g.beginPath(); g.arc(cx + cw * 0.48, cy - ch * 1.2, cw * 0.11, 0, 7); g.fill();
+      g.fillStyle = '#3c414c';
+      g.fillRect(cx + cw * 0.7, cy - ch * 2.2, cw * 0.05, ch * 2.6);   // the pole
+    } else {
+      // motion ghost first (low quality = long smear)
+      const smear = (1 - q) * W * 0.05;
+      const body = (dx, alpha) => {
+        g.globalAlpha = alpha;
+        g.fillStyle = Renderer.carColorHex(read.actualPlate);
+        g.beginPath();
+        g.roundRect(cx + dx, cy - ch, cw, ch, ch * 0.35);
+        g.fill();
+        g.fillStyle = 'rgba(10,12,16,0.85)';   // glasshouse
+        g.beginPath();
+        g.roundRect(cx + dx + cw * (flip ? 0.42 : 0.18), cy - ch * 0.92, cw * 0.4, ch * 0.5, ch * 0.2);
+        g.fill();
+        g.globalAlpha = 1;
+      };
+      if (smear > 0.5) body(flip ? smear : -smear, 0.35);
+      body(0, 1);
+      // wheels
+      g.fillStyle = '#0a0c10';
+      g.beginPath(); g.arc(cx + cw * 0.22, cy + 1, ch * 0.28, 0, 7); g.fill();
+      g.beginPath(); g.arc(cx + cw * 0.78, cy + 1, ch * 0.28, 0, 7); g.fill();
+      // headlight bloom
+      const hx = flip ? cx : cx + cw;
+      const hg = g.createRadialGradient(hx, cy - ch * 0.5, 2, hx, cy - ch * 0.5, cw * 0.5);
+      hg.addColorStop(0, 'rgba(255,233,176,0.55)'); hg.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = hg; g.fillRect(0, 0, W, H);
+      // murk swallows colour as quality falls — a bad frame keeps its secrets
+      g.fillStyle = `rgba(13,16,23,${(1 - q) * 0.62})`;
+      g.fillRect(cx - 4, cy - ch - 4, cw + 8, ch * 1.4 + 8);
+    }
+
+    // the plate strip — the ANPR close-up along the bottom
+    g.fillStyle = 'rgba(5,6,9,0.88)';
+    g.fillRect(0, H * 0.8, W, H * 0.2);
+    const plate = read.plate || '???-???';
+    const pw = W * 0.44, ph = H * 0.15;
+    const px = (W - pw) / 2, py = H * 0.825;
+    g.fillStyle = '#c9cdd6';
+    g.beginPath(); g.roundRect(px, py, pw, ph, 3); g.fill();
+    g.font = `bold ${Math.floor(ph * 0.78)}px monospace`;
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    const step = pw / (plate.length + 1);
+    for (let i = 0; i < plate.length; i++) {
+      const legible = (hashStr(read.id + ':' + i) % 100) < q * 118 - 10;
+      const chx = px + step * (i + 1), chy = py + ph / 2;
+      if (legible) {
+        g.fillStyle = '#14161c';
+        g.fillText(plate[i], chx, chy + 1);
+      } else {
+        g.fillStyle = 'rgba(20,22,28,0.5)';   // the smudge: something was there
+        g.fillText(plate[i], chx + (rng() - 0.5) * 3, chy + 1);
+        g.fillStyle = 'rgba(120,124,134,0.8)';
+        g.fillRect(chx - step * 0.38, py + ph * 0.18, step * 0.76, ph * 0.64);
+      }
+    }
+
+    // weather and neglect leave their marks
+    if (read.rain) {
+      g.strokeStyle = 'rgba(120,150,190,0.28)'; g.lineWidth = 1;
+      for (let i = 0; i < 30; i++) {
+        const x = rng() * W, y = rng() * H * 0.8;
+        g.beginPath(); g.moveTo(x, y); g.lineTo(x - 4, y + 11); g.stroke();
+      }
+    }
+    if (read.camTags > 0) {
+      for (let i = 0; i < read.camTags + 1; i++) {
+        const sg = g.createRadialGradient(rng() * W, rng() * H * 0.7, 2, rng() * W, rng() * H * 0.7, W * 0.3);
+        sg.addColorStop(0, 'rgba(22,26,20,0.55)'); sg.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = sg; g.fillRect(0, 0, W, H);
+      }
+    }
+    // grain
+    const specks = Math.floor((1 - q) * 170);
+    for (let i = 0; i < specks; i++) {
+      g.fillStyle = rng() < 0.5 ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.25)';
+      g.fillRect(rng() * W, rng() * H, 1.5, 1.5);
+    }
+    // vignette
+    const vg = g.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, W * 0.75);
+    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.5)');
+    g.fillStyle = vg; g.fillRect(0, 0, W, H);
+  }
+
+  const HEADINGS = ['→ EAST', '↓ SOUTH', '← WEST', '↑ NORTH'];
+
+  function stillMeta(read, idx, refId, conflicts, idxOf) {
+    const bits = [];
+    if (read.id === refId) bits.push('<span class="ref">BEST FRAME #' + idx + '</span>');
+    else bits.push('#' + idx);
+    bits.push('CONF ' + read.conf);
+    bits.push(fmtTime(read.t));
+    bits.push('CAM ' + read.camId + (read.camTags > 0 ? ' · <span class="warn">LENS FOULED</span>' : ''));
+    if (read.vehId !== null && read.heading !== undefined) bits.push(HEADINGS[read.heading]);
+    const against = conflicts.filter(p => p.includes(read.id));
+    if (against.length) bits.push('<span class="warn">⚠ CANNOT BE ONE CAR WITH ' +
+      against.map(p => '#' + idxOf[p[0] === read.id ? p[1] : p[0]]).join(', ') + '</span>');
+    return bits.join(' · ');
+  }
+
+  let evsheetCaseId = null;
+
+  function openEvidenceSheet(caseId) {
+    closeEvidenceSheet();
+    const kase = CaseSystem.byId(state, caseId);
+    if (!kase || kase.status !== 'CONTESTED') return;
+    evsheetCaseId = caseId;
+    const ev = CaseSystem.usableEvidence(state, kase).sort((a, b) => a.t - b.t);
+    const pairs = CaseSystem.contradictionPairs(state, ev);
+    const refId = ev.length ? ev.reduce((m, r) => r.conf > m.conf ? r : m, ev[0]).id : -1;
+    const idxOf = {};
+    ev.forEach((r, i) => { idxOf[r.id] = i + 1; });
+
+    const sheet = h('div', 'evsheet');
+    sheet.setAttribute('data-key', 'evsheet');
+    const c = kase.contested || {};
+    sheet.innerHTML = `<div class="evhead"><b>CASE FILE — ${kase.plate}</b>
+      <span>${kase.type} · ${ev.length} read${ev.length === 1 ? '' : 's'} · ${c.contradiction ? 'contradiction' : 'near the bar'} · cold in ${Math.max(0, Math.ceil(kase.coldAt - state.time))}s</span>
+      <button data-key="ev-close">✕</button></div>`;
+
+    // reference frame, big
+    const ref = ev.find(r => r.id === refId);
+    if (ref) {
+      const wrap = h('div', 'evref');
+      const cv = document.createElement('canvas');
+      cv.width = 720; cv.height = 300;
+      drawStill(cv, ref);
+      wrap.appendChild(cv);
+      const meta = h('div', 'evmeta');
+      meta.innerHTML = stillMeta(ref, idxOf[ref.id], refId, pairs, idxOf);
+      wrap.appendChild(meta);
+      wrap.onclick = () => { Renderer.centerOn(ref.camNode); Renderer.pingNode(ref.camNode); };
+      sheet.appendChild(wrap);
+    }
+
+    // every frame in time order
+    const grid = h('div', 'evgrid');
+    ev.forEach((r, i) => {
+      const cell = h('div', 'evcell');
+      cell.setAttribute('data-key', 'ev-still-' + (i + 1));
+      const cv = document.createElement('canvas');
+      cv.width = 352; cv.height = 200;
+      drawStill(cv, r);
+      cell.appendChild(cv);
+      const meta = h('div', 'evmeta');
+      meta.innerHTML = stillMeta(r, i + 1, refId, pairs, idxOf);
+      cell.appendChild(meta);
+      const inConflict = pairs.some(p => p.includes(r.id));
+      cell.onclick = () => { Renderer.centerOn(r.camNode); Renderer.pingNode(r.camNode, inConflict ? 'red' : 'cyan'); };
+      grid.appendChild(cell);
+    });
+    sheet.appendChild(grid);
+
+    sheet.appendChild(h('div', 'evhint',
+      'Compare each car with the best frame. Smudged plates and murky frames are weak; ⚠ frames cannot be the same vehicle. Tap a frame to see its pole.'));
+
+    const verdict = h('div', 'evverdict');
+    const cb = h('button', 'charge', 'CHARGE');
+    cb.setAttribute('data-key', 'ev-charge-' + kase.id);
+    cb.onclick = () => { GameAudio.unlock(); Actions.adjudicate(state, kase.id, 'CHARGE'); closeEvidenceSheet(); };
+    const rb = h('button', 'release', 'RELEASE');
+    rb.setAttribute('data-key', 'ev-release-' + kase.id);
+    rb.onclick = () => { GameAudio.unlock(); Actions.adjudicate(state, kase.id, 'RELEASE'); closeEvidenceSheet(); };
+    verdict.appendChild(cb); verdict.appendChild(rb);
+    sheet.appendChild(verdict);
+
+    sheet.querySelector('[data-key=ev-close]').onclick = () => closeEvidenceSheet();
+    root.appendChild(sheet);
+    els.evsheet = sheet;
+  }
+
+  function closeEvidenceSheet() {
+    if (els.evsheet) { els.evsheet.remove(); els.evsheet = null; }
+    evsheetCaseId = null;
   }
 
   // ---------- identity pill: tap anything and it names itself ----------
@@ -598,7 +846,7 @@ var UI = (() => {
   }
 
   function showVerdict(v) {
-    cancelGhost(); closeMenu();
+    cancelGhost(); closeMenu(); closeEvidenceSheet();
     hideOverlay();
     const o = h('div', 'overlay');
     o.setAttribute('data-key', 'verdict');
@@ -797,6 +1045,7 @@ var UI = (() => {
   return {
     init, setMatch, update, identity,
     showTitle, showVerdict, hideOverlay,
+    openEvidenceSheet, closeEvidenceSheet,
     openMenu, closeMenu, startGhost, cancelGhost, positionConfirm,
     setSuppressTaps: (v) => { suppressTaps = v; },
     getEl: (key) => root.querySelector(`[data-key="${key}"]`),

@@ -829,6 +829,8 @@ var Renderer = (() => {
       const p = nodePos(curState.map, nodeIdx);
       return worldToScreen(p.x, p.z, 0);
     },
+    carColorHex: (plate) => '#' + CAR_COLORS[hashStr(plate) % CAR_COLORS.length].toString(16).padStart(6, '0'),
+    pingNode: (n, color) => curState && ringFx(curState, n, color === 'red' ? V.RED : V.CYAN, 1.4, 0.15, 0.7),
     setGhost: (n, t, d, ok) => setGhost(curState, n, t, d, ok),
     clearGhost,
     setSelected: (n) => setSelected(curState, n),

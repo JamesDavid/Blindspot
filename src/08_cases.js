@@ -47,6 +47,18 @@ var CaseSystem = (() => {
     return out;
   }
 
+  // Which pairs of reads cannot be one vehicle — the evidence sheet marks
+  // these so the player can see WHERE the file's story breaks.
+  function contradictionPairs(state, evidence) {
+    const pairs = [];
+    for (let i = 0; i < evidence.length; i++) {
+      for (let j = i + 1; j < evidence.length; j++) {
+        if (!pairCoherent(state, evidence[i], evidence[j])) pairs.push([evidence[i].id, evidence[j].id]);
+      }
+    }
+    return pairs;
+  }
+
   // Best coherent triple by confidence sum; also reports whether any
   // contradictory pair exists in the evidence set.
   function grade(state, evidence) {
@@ -340,7 +352,7 @@ var CaseSystem = (() => {
           state.stats.contestedShown++;
           kase.contested = { at: state.time, reads: ev.length, contradiction: g.contradiction, nearBar: !!nearBar };
           State.emit(state, { type: 'contested', caseId: kase.id });
-          State.log(state, 'Contested case: the evidence is not sure of itself. Charge or release.', 'first-contested');
+          State.log(state, 'Contested case. Open the card and read the stills before you rule.', 'first-contested');
         }
       } else if (kase.status === 'CONTESTED') {
         // a contested case that accumulates clean closure evidence still
@@ -366,7 +378,7 @@ var CaseSystem = (() => {
     }
   }
 
-  return { byId, openCrime, attachRead, tick, close, goCold, usableEvidence, grade, nodeDist, pairCoherent };
+  return { byId, openCrime, attachRead, tick, close, goCold, usableEvidence, grade, nodeDist, pairCoherent, contradictionPairs };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { CaseSystem };

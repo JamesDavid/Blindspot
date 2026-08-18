@@ -69,10 +69,16 @@ var Demo = (() => {
       const avg = ev.length ? ev.reduce((s, r) => s + r.conf, 0) / ev.length : 0;
       const gr = CaseSystem.grade(state, ev);
       const charge = (avg / 100 + 0.15 * Math.min(ev.length, 4) - (gr.contradiction ? 0.35 : 0)) > STRAT.ADJ_BIAS;
-      const btnKey = (charge ? 'charge-' : 'release-') + contested.id;
+      const btnKey = 'ev-' + (charge ? 'charge-' : 'release-') + contested.id;
+      // open the case file, visibly read the stills, then rule
       stage('adjudicate', [
-        { delay: 0.3, fn: () => { const el = UI.getEl(btnKey); if (el) el.scrollIntoView({ inline: 'center' }); lit(UI.getEl(btnKey)); } },
-        { delay: D.HIGHLIGHT_S + 0.4, fn: () => { const el = UI.getEl(btnKey); if (pressable(el)) el.click(); unlight(); } }
+        { delay: 0.3, fn: () => UI.openEvidenceSheet(contested.id) },
+        { delay: 1.6, fn: () => lit(UI.getEl(btnKey)) },
+        { delay: D.HIGHLIGHT_S + 0.5, fn: () => {
+          const el = UI.getEl(btnKey);
+          if (pressable(el)) el.click(); else UI.closeEvidenceSheet();
+          unlight();
+        } }
       ]);
       return;
     }
