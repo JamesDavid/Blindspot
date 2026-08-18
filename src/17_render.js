@@ -1153,10 +1153,23 @@ var Renderer = (() => {
     if (read.vehId !== null) {
       subject = buildVehicle({ plate: read.actualPlate, id: -1 });
       const HD = [[1, 0], [0, 1], [-1, 0], [0, -1]][read.heading || 0];
+      // Where on the segment was the car when the lens caught it? A street
+      // collinear with the pole is visible its whole length (mid-block
+      // shot); cross-traffic is only visible inside the intersection box
+      // the sight ray reaches — a mid-block position there sits behind the
+      // building row, and a lens must never show a wall yet claim a plate.
+      const ga = map.nodes[seg.a], gb = map.nodes[seg.b], gc = map.nodes[read.camNode];
+      const collinear = (ga.x === gc.x && gb.x === gc.x) || (ga.y === gc.y && gb.y === gc.y);
+      let f = 0.5;
+      if (!collinear) {
+        const cn0 = nodePos(map, read.camNode);
+        const da = Math.hypot(a.x - cn0.x, a.z - cn0.z), db = Math.hypot(b.x - cn0.x, b.z - cn0.z);
+        f = da <= db ? 0.1 : 0.9;   // snapped crossing the visible junction
+      }
       // on its correct (right-hand) side of the street in the photo too
       subject.position.set(
-        a.x + (b.x - a.x) * 0.5 - HD[1] * 0.07, 0,
-        a.z + (b.z - a.z) * 0.5 + HD[0] * 0.07);
+        a.x + (b.x - a.x) * f - HD[1] * 0.07, 0,
+        a.z + (b.z - a.z) * f + HD[0] * 0.07);
       subject.rotation.y = -Math.atan2(HD[1], HD[0]);
     } else {
       subject = buildVandal({ id: -1, type: 'FIXER' });
