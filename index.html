@@ -22,7 +22,7 @@
 <script>
 'use strict';
 /* BLIND SPOT — a camera-network tower defense prototype. */
-window.BUILDSTAMP = 'BUILD 2026-08-18 06:37 UTC';
+window.BUILDSTAMP = 'BUILD 2026-08-18 06:54 UTC';
 
 // ============================================================
 // CONFIG
@@ -4704,8 +4704,14 @@ var UI = (() => {
 
     syncCards();
 
-    // an open ledger stays current (trial countdowns tick, files land)
-    if (ledgerOpen && state.time - ledgerBuiltAt > 1.5) openLedger();
+    // an open ledger stays current — but only rebuilds when something
+    // actually changed, so a tap can never land on a destroyed row
+    if (ledgerOpen && state.time - ledgerBuiltAt > 1.0) {
+      const lsig = state.cases.map(c => c.id + c.status +
+        (c.status === 'ARREST' ? Math.ceil(c.convictAt - state.time) : '')).join('|');
+      if (els._ledgerSig !== lsig) { els._ledgerSig = lsig; openLedger(); }
+      ledgerBuiltAt = state.time;
+    }
 
     // an open case file follows its case: resolved or expired → it closes
     if (evsheetCaseId !== null) {
@@ -4788,6 +4794,26 @@ var UI = (() => {
         (kase.type === 'VANDAL' ? ' vandal' : '') +
         (kase.status === 'CLOSED' && state.time - kase.convictAt > 1.5 ? ' closing' : '') +
         (kase.status === 'COLD' ? ' cold' : '');
+
+      // REBUILD ONLY WHEN CONTENT CHANGES (player-directed bug: a card
+      // rewritten every frame destroys its buttons mid-tap — a thumb
+      // could never land CHARGE/RELEASE). The timer bar updates in place.
+      const trialS = kase.status === 'ARREST' ? Math.max(0, Math.ceil(kase.convictAt - state.time)) : '';
+      const candN = kase.plate === null && kase._candPlates ? Object.keys(kase._candPlates).length : '';
+      let chainSum = '';
+      if (kase.status === 'OPEN' && kase.plate !== null && kase.type !== 'VANDAL' && ev.length >= 2) {
+        const grS = CaseSystem.grade(state, ev, CaseSystem.gradeOpts(kase));
+        if (grS.bestSum > 0 && grS.bestSum < CONFIG.Cases.CLOSURE_CONFIDENCE_SUM) chainSum = grS.bestSum;
+      }
+      const sig = [kase.status, kase.plate, ev.length, expSoon, trialS, candN, chainSum,
+        kase.contested && kase.contested.contradiction].join('|');
+      if (el._sig === sig) {
+        const bar = el.querySelector('.timer i');
+        if (bar) bar.style.width = (frac * 100) + '%';
+        if (kase.status === 'COLD') kase._coldShownUntil = kase._coldShownUntil || state.time + 1.6;
+        continue;
+      }
+      el._sig = sig;
       if (kase.status === 'CONTESTED') {
         const c = kase.contested || {};
         el.innerHTML = `
@@ -5139,6 +5165,60 @@ var UI = (() => {
     return pts;
   }
 
+  // The lineup map: the scene, and where each lettered candidate was
+  // photographed — proximity in space and time IS the deduction.
+  function drawCandidateMap(cv, kase, cands) {
+    const g = cv.getContext('2d');
+    const map = state.map, W = cv.width, H = cv.height, m = 30;
+    g.fillStyle = '#0a0c11'; g.fillRect(0, 0, W, H);
+    const sn = map.nodes[kase.spawnNode];
+    const pts = [{ x: sn.x, y: sn.y }, ...cands.map(c => carXY(c.read))];
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const p of pts) {
+      x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
+      y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+    }
+    x0 = Math.max(0, x0 - 2); x1 = Math.min(map.W - 1, x1 + 2);
+    y0 = Math.max(0, y0 - 2); y1 = Math.min(map.H - 1, y1 + 2);
+    const scale = Math.min((W - 2 * m) / Math.max(2, x1 - x0), (H - 2 * m) / Math.max(2, y1 - y0), 90);
+    const ox = (W - (x1 - x0) * scale) / 2 - x0 * scale, oy = (H - (y1 - y0) * scale) / 2 - y0 * scale;
+    g.save();
+    g.beginPath(); g.rect(0, 0, W, H); g.clip();
+    g.strokeStyle = '#242a36'; g.lineWidth = 2;
+    for (const s of map.segs) {
+      const a = map.nodes[s.a], b = map.nodes[s.b];
+      g.beginPath();
+      g.moveTo(ox + a.x * scale, oy + a.y * scale);
+      g.lineTo(ox + b.x * scale, oy + b.y * scale);
+      g.stroke();
+    }
+    // the scene
+    g.save();
+    g.translate(ox + sn.x * scale, oy + sn.y * scale);
+    g.rotate(Math.PI / 4);
+    g.fillStyle = '#ff5a52';
+    g.fillRect(-8, -8, 16, 16);
+    g.restore();
+    g.font = 'bold 15px monospace'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    const seenAt = {};
+    for (const c of cands) {
+      const p = carXY(c.read);
+      const k = Math.round(p.x * 2) + '_' + Math.round(p.y * 2);
+      const jit = (seenAt[k] || 0) * 12;
+      seenAt[k] = (seenAt[k] || 0) + 1;
+      const x = ox + p.x * scale + jit, y = oy + p.y * scale - jit;
+      g.fillStyle = c.color;
+      g.beginPath(); g.arc(x, y, 12, 0, 7); g.fill();
+      g.fillStyle = '#0b0d12';
+      g.fillText(c.letter, x, y + 1);
+    }
+    g.restore();
+    g.font = '11px monospace'; g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+    g.fillStyle = 'rgba(10,12,17,0.8)'; g.fillRect(2, 2, 210, 36);
+    g.fillStyle = '#ff5a52'; g.fillText('◆ the scene', 8, 16);
+    g.fillStyle = '#c9cdd6'; g.fillText('● candidate, where it was seen', 8, 32);
+  }
+
   // The sightings map: where each frame's CAR was, in time order, the
   // INFERRED street route between them (impossible legs stay straight
   // dashed red — a lie can't drive), and the landmarks for bearings.
@@ -5311,23 +5391,56 @@ var UI = (() => {
         if (r.candidateOf !== kase.id) continue;
         (groups[r.actualPlate] = groups[r.actualPlate] || []).push(r);
       }
+      // the tie is a DEDUCTION, not a coin flip (player-directed): each
+      // candidate carries where and when it was photographed relative to
+      // the scene — the car seen a block away seconds after the crime is
+      // the bet; letters key the cells to the map below
+      const stats = {};
+      for (const p of Object.keys(groups)) {
+        const frames = groups[p];
+        let dist = Infinity, dt = Infinity;
+        for (const r of frames) {
+          const s = state.map.segs[r.segId];
+          if (s) dist = Math.min(dist, Math.min(
+            CaseSystem.nodeDist(state, s.a, kase.spawnNode),
+            CaseSystem.nodeDist(state, s.b, kase.spawnNode)));
+          dt = Math.min(dt, r.t - kase.openedAt);
+        }
+        stats[p] = { dist, dt };
+      }
       const plates = Object.keys(groups).sort((a, b) =>
-        groups[b].reduce((s, r) => s + r.conf, 0) - groups[a].reduce((s, r) => s + r.conf, 0));
+        (stats[a].dist * 2 + stats[a].dt * 0.2) - (stats[b].dist * 2 + stats[b].dt * 0.2));
+      const LETTERS = ['A', 'B', 'C', 'D'];
+      const LCOLORS = ['#ffc84a', '#53c8ff', '#7ad9a0', '#ff9a6a'];
       if (!plates.length) {
         sheet.appendChild(h('div', 'evhint',
           'No candidates yet. Coverage near ' + (kase.landmark || 'the scene') + ' will photograph cars matching the description.'));
       } else {
+        // where each candidate was, against the scene
+        const mapWrap = h('div', 'evmap');
+        const mcv = document.createElement('canvas');
+        mcv.width = 720; mcv.height = 360;
+        drawCandidateMap(mcv, kase, plates.map((p, i) => ({
+          plate: p, letter: LETTERS[i] || '?', color: LCOLORS[i] || '#8b93a5',
+          read: groups[p].slice().sort((a, b) => a.t - b.t)[0]
+        })));
+        mapWrap.appendChild(mcv);
+        sheet.appendChild(mapWrap);
         const grid = h('div', 'evgrid');
-        for (const p of plates) {
+        plates.forEach((p, pi) => {
           const frames = groups[p].sort((a, b) => b.conf - a.conf);
           const bestR = frames[0];
+          const st2 = stats[p];
+          const atScene = st2.dist <= CONFIG.Cases.SCENE_ID_DIST && st2.dt <= CONFIG.Cases.SCENE_ID_WINDOW;
           const cell = h('div', 'evcell');
           const cv = document.createElement('canvas');
           cv.width = 352; cv.height = 200;
           drawStill(cv, bestR);
           cell.appendChild(cv);
           const meta = h('div', 'evmeta');
-          meta.innerHTML = `${frames.length} frame${frames.length === 1 ? '' : 's'} · BEST CONF ${bestR.conf} · ${fmtTime(bestR.t)}`;
+          meta.innerHTML = `<b style="color:${LCOLORS[pi] || '#8b93a5'}">CANDIDATE ${LETTERS[pi] || '?'}</b> · ${frames.length} frame${frames.length === 1 ? '' : 's'} · BEST CONF ${bestR.conf}<br>` +
+            `seen <b>${isFinite(st2.dist) ? st2.dist + ' block' + (st2.dist === 1 ? '' : 's') : '?'}</b> from the scene, <b>${isFinite(st2.dt) ? Math.round(st2.dt) + 's' : '?'}</b> after` +
+            (atScene ? ' · <span style="color:#7ad9a0;font-weight:700">AT THE SCENE WHEN IT HAPPENED</span>' : '');
           cell.appendChild(meta);
           const btn = h('button', 'release', 'TIE FILE TO THIS CAR');
           btn.style.cssText = 'width:100%;margin-top:4px;padding:8px 0;border:none;border-radius:7px;font-weight:800;font-size:10.5px;background:#31504f;color:#d2f2ef;';
@@ -5340,7 +5453,7 @@ var UI = (() => {
           };
           cell.appendChild(btn);
           grid.appendChild(cell);
-        }
+        });
         sheet.appendChild(grid);
       }
       sheet.appendChild(h('div', 'evhint',
