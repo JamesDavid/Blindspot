@@ -22,7 +22,7 @@
 <script>
 'use strict';
 /* BLIND SPOT — a camera-network tower defense prototype. */
-window.BUILDSTAMP = 'BUILD 2026-08-18 00:23 UTC';
+window.BUILDSTAMP = 'BUILD 2026-08-18 00:33 UTC';
 
 // ============================================================
 // CONFIG
@@ -54,20 +54,20 @@ var CONFIG = Object.freeze({
     DEGRADE_PER_TAG: 15,            // spec-authored
     DEGRADE_FLOOR: 25,              // spec-authored: a degraded camera never goes silent — it lies
     CLARITY: 75,                    // judgment-tuned: reads below this are ambiguous and can misattach to an open case (§7.1's trap)
-    MISREAD_BASE: 0.5,              // judgment-tuned: misattach likelihood scales with ambiguity — near-CLARITY reads almost never lie, deep-LAX reads often do
+    MISREAD_BASE: 0.75,             // swept (A/B in opt_threshold work): at 0.5 a LAX bar won cleanly (trap toothless); 0.75 gives the intended ridge — 45 punished, 55 best, 65 starved
     MISREAD_MAX_DIST: 3             // judgment-tuned: ambiguous sightings only misattach near the crime scene — believable lies, not cross-town ones
   },
 
   Threshold: {
-    START: 70,                      // spec-authored; sweep planned (test/opt_threshold.js)
+    START: 60,                      // swept (test/opt_threshold.js): player-bar ridge at 55-60; spec's 70 opens in a band that starves shifts 1-3
     MIN: 0, MAX: 100,               // spec-authored
     BANDS: [[0, 'LAX'], [35, 'EASY'], [55, 'FAIR'], [70, 'STRICT'], [85, 'SEVERE']] // spec-authored
   },
 
   Cases: {
-    READS_TO_CLOSE: 3,              // spec-authored; sweep planned (test/opt_lifetime.js)
+    READS_TO_CLOSE: 3,              // swept (test/opt_lifetime.js): 2 scores lower everywhere, 4 dips at mid lifetimes; 3 is the ridge
     CLOSURE_CONFIDENCE_SUM: 210,    // spec-authored: three serviceable reads or two clean ones plus a poor one
-    LIFETIME_SECONDS: 75,           // spec-authored; sweep planned (test/opt_lifetime.js)
+    LIFETIME_SECONDS: 75,           // swept (test/opt_lifetime.js): best cell at 75x3 (60.6); 55 rushes, 110 sags
     CONTESTED_BAND: 12,             // judgment-tuned: width of the near-bar band that surfaces a card
     CONTESTED_PER_SHIFT_MIN: 2,     // spec-authored: enough to matter
     CONTESTED_PER_SHIFT_MAX: 4,     // spec-authored: few enough to stay a judgement call
@@ -78,7 +78,7 @@ var CONFIG = Object.freeze({
 
   Retention: {
     UPLOAD_INTERVAL: 20.0,          // spec-authored: the vandal-erases-evidence window (§10.1)
-    WINDOW_SECONDS: 90.0,           // spec-authored; sweep planned (test/opt_threshold.js)
+    WINDOW_SECONDS: 90.0,           // swept (test/opt_threshold.js): flat 60-120 within noise at every bar; keep spec value
     STORAGE_UPGRADE_BONUS: 60.0,    // spec-authored: more memory vs more eyes
     RELAY_CONTINUOUS: true          // spec-authored: the mechanical reason relays exist
   },
@@ -106,7 +106,7 @@ var CONFIG = Object.freeze({
     MAX_SIMULTANEOUS: 3,            // spec-authored (§11.4): livelock guard
     RETARGET_COOLDOWN: 8.0,         // spec-authored (§11.4)
     ABANDON_AFTER: 10.0,            // spec-authored (§11.4): unreachable-target fallback
-    CREW_CASE_BOUNTY_MULT: 2.0,     // spec-authored at x1; sweep planned (test/opt_bounty.js) — expect x2 to rescue collapses
+    CREW_CASE_BOUNTY_MULT: 2.0,     // swept (test/opt_bounty.js) 0-3: flat within noise on healthy AND collapsing cohorts (collapse here is clearance-driven, not cash-driven); keep x2
     WITNESS_READ_INTERVAL: 2.0,     // judgment-tuned: a witnessed vandal is read every this-many seconds while acting
     REVEAL_DELAY_LOW_TRUST: 6.0     // judgment-tuned: low trust reports vandalism late (§15.3)
   },
@@ -125,12 +125,12 @@ var CONFIG = Object.freeze({
   },
 
   Economy: {
-    START_BUDGET: 120,              // spec-authored; sweep planned (test/opt_start.js)
+    START_BUDGET: 120,              // swept (test/opt_start.js): 120 optimal; richer starts plateau LOWER (180 scores ~47, 260 ~39) — the same shape the previous prototype found
     PAYOUT_PETTY: 25, PAYOUT_MAJOR: 60, PAYOUT_SYNDICATE: 90, // spec-authored, scaled by severity
     CLEARANCE_START: 70,            // spec-authored
     CLEARANCE_FLOOR: 35,            // spec-authored: fall below and you are relieved
     CLEARANCE_PRIOR: 10,            // judgment-tuned: pseudo-count seeding the rolling percentage so one early cold case is not lethal
-    TRUST_START: 80,                // spec-authored; sweep planned (test/opt_start.js)
+    TRUST_START: 80,                // swept (test/opt_start.js): 70-90 within noise at budget 120; keep spec value
     TRUST_FLOOR: 20,                // spec-authored: too many wrong people stopped and you are relieved
     TRUST_LOSS_FALSE_CHARGE: 12,    // spec-authored
     TRUST_GAIN_CORRECT_RELEASE: 3,  // spec-authored
@@ -150,12 +150,12 @@ var CONFIG = Object.freeze({
     FIRST_AT: 45.0, TELEGRAPH: 6.0, // spec-authored
     INTERVAL_EARLY: 55.0, INTERVAL_MID: 45.0, INTERVAL_LATE: 35.0, // spec-authored: compressing the interval is free difficulty
     COUNT: 9,                       // spec-authored
-    OVERTIME_INTERVAL: 30.0,        // spec-authored; census planned (test/test_census.js)
-    OVERTIME_STEP: 0.15,            // spec-authored; census planned — the previous prototype's gentle first try was shrugged off by turtles
-    OVERTIME_CAP: 1.8,              // spec-authored; census planned
+    OVERTIME_INTERVAL: 30.0,        // census-run (test/opt_overtime.js): 0 timeouts in every swept cell; 24-40s flat; keep 30
+    OVERTIME_STEP: 0.15,            // census-run (test/opt_overtime.js): 0.08-0.25 all end every match with a verdict mix; keep 0.15
+    OVERTIME_CAP: 1.8,              // census-run: cap never the binding constraint in the sweep; keep
     REVIEW_AFTER: 5,                // spec-authored: overtime shifts before the Review convenes
     REVIEW_WEIGHTS: { WARRANT: 3, CLEARANCE: 2, TRUST: 2, NETWORK: 1, TREASURY: 1 }, // spec-authored: same composite the ladder tally uses
-    REVIEW_PASS: 55,                // judgment-tuned; census planned: the weighed score the Review must reach to rule FOR the analyst; it can and must be able to rule against
+    REVIEW_PASS: 55,                // census-run: 8-seed census yields both rulings (5-6 W / 2-3 L) and rules against a do-nothing analyst; the weighed score the Review must reach to rule FOR the analyst; it can and must be able to rule against
     RAIN_DURATION: 25.0,            // judgment-tuned: long enough to force a dial move, short enough to recover
     RAIN_RECUR_EVERY: 3             // judgment-tuned: rain recurs every third shift after 6
   },

@@ -44,4 +44,5 @@ A running record kept during the build. Prompt-built with an AI coding agent
 
 | # | Prompt (summary) | Commit | Result |
 |---|---|---|---|
+| 6 | (milestone 6: browser battery) | `7a2785f` | test_input green (tap-to-place, pan≠tap, pinch, orphan-pointer recovery, refusal reasons); test_resume green (pagehide snapshot → offer → exact restore vs the snapshot itself → still ticking → decided match clears save). Two test-side races fixed (pole under HUD; comparing against a moving clock instead of the snapshot). |
 | 5 | (milestone 5: DOM layer) | `58a051d` | Audio synth, night-city renderer (coverage overlay recolours board-wide with the dial), tap-first UI (menu columns EYES·UPLINK·WORKS·DIAL, quality pill, identity pills, contested cards), tutorial with pointing hand, WATCH A SHIFT demo driving the real UI, main loop with dt clamp + save-on-hide. Live smoke in a real browser: zero page errors; place flow, dial, ghost pill all verified on screenshots. Fixed: HUD stacked above title overlay. |
